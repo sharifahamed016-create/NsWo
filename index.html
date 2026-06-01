@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="bn">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>নাছিরেরটেক সমাজকল্যাণ সংস্থা (NSWO)</title>
+    
+    <!-- PWA primary configs and favicon tags -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" href="/nswo-logo.png" />
+    <link rel="icon" type="image/svg+xml" href="/nswo-logo.svg" />
+    <meta name="theme-color" content="#064e3b" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="NSWO" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Intelligent service worker auto-registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then((reg) => console.log('NSWO ServiceWorker active and registered:', reg.scope))
+            .catch((err) => console.warn('NSWO ServiceWorker registration failed:', err));
+        });
+      }
+    </script>
+  </body>
+</html>
+

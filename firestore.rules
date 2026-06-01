@@ -1,0 +1,150 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper Functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incomingData() {
+      return request.resource.data;
+    }
+
+    function existingData() {
+      return resource.data;
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/user_roles/$(request.auth.token.email.lower())) &&
+        get(/databases/$(database)/documents/user_roles/$(request.auth.token.email.lower())).data.role == role;
+    }
+
+    // Role Hierarchy Definitions
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'sharifahamed016@gmail.com' ||
+        hasRole('SUPER_ADMIN')
+      );
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        hasRole('ADMIN')
+      );
+    }
+
+    function isModerator() {
+      return isSignedIn() && (
+        isAdmin() ||
+        hasRole('MODERATOR') ||
+        request.auth.token.email == 'moderator@example.com' ||
+        request.auth.token.email.matches('.*moderator.*')
+      );
+    }
+
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // User Roles Collection
+    match /user_roles/{email} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // Members Collection
+    match /members/{memberId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // Payments Collection
+    match /payments/{paymentId} {
+      allow read: if isSignedIn();
+      allow create: if isModerator() && isValidPayment(incomingData());
+      allow update: if isModerator();
+      allow delete: if isSuperAdmin();
+
+      function isValidPayment(data) {
+        return data.keys().hasAll(['memberId', 'amount', 'date', 'receiptNo', 'month']) &&
+               data.amount is number && data.amount > 0 &&
+               data.memberId is string &&
+               data.receiptNo is string && data.receiptNo.size() <= 20;
+      }
+    }
+
+    // Expenses Collection
+    match /expenses/{expenseId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidExpense(incomingData());
+      allow update: if isAdmin();
+      allow delete: if isSuperAdmin();
+
+      function isValidExpense(data) {
+        return data.keys().hasAll(['amount', 'date', 'category', 'description']) &&
+               data.amount is number && data.amount > 0 &&
+               data.category is string &&
+               data.description is string && data.description.size() <= 500;
+      }
+    }
+
+    // Events Collection
+    match /events/{eventId} {
+      allow read: if isSignedIn();
+      allow create, update: if isModerator();
+      allow delete: if isAdmin();
+    }
+
+    // Event Donors Collection
+    match /event_donors/{donorId} {
+      allow read: if isSignedIn();
+      allow create, update: if isModerator();
+      allow delete: if isAdmin();
+    }
+
+    // Event Expenses Collection
+    match /event_expenses/{expenseId} {
+      allow read: if isSignedIn();
+      allow create, update: if isModerator();
+      allow delete: if isAdmin();
+    }
+
+    // Blood Donors Collection
+    match /blood_donors/{donorId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // System Activities Log Collection
+    match /activities/{activityId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // Metadata / System Settings
+    match /settings/config {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
+    match /metadata/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isModerator();
+      allow delete: if isAdmin();
+    }
+  }
+}

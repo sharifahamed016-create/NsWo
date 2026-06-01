@@ -1,0 +1,91 @@
+{
+  "entities": {
+    "Member": {
+      "title": "Member",
+      "description": "A registered member of NSWO",
+      "type": "object",
+      "properties": {
+        "memberId": { "type": "string", "description": "Custom identity like NSWO-001" },
+        "name": { "type": "string" },
+        "nameBn": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "inactive"] },
+        "joinedDate": { "type": "string", "format": "date" },
+        "balance": { "type": "number" },
+        "totalPaid": { "type": "number" },
+        "totalDue": { "type": "number" },
+        "includeInMonthlyLedger": { "type": "boolean" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["memberId", "name", "nameBn", "phone", "status"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "A financial contribution from a member",
+      "type": "object",
+      "properties": {
+        "memberId": { "type": "string" },
+        "memberName": { "type": "string" },
+        "memberNameBn": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string", "format": "date" },
+        "month": { "type": "string" },
+        "year": { "type": "number" },
+        "type": { "type": "string" },
+        "receiptNo": { "type": "string" },
+        "method": { "type": "string" },
+        "remarks": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["memberId", "amount", "date", "receiptNo"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Expenditure by the organization",
+      "type": "object",
+      "properties": {
+        "amount": { "type": "number" },
+        "date": { "type": "string", "format": "date" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "requestedBy": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["amount", "date", "category"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Global configuration for the application",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "nameBn": { "type": "string" },
+        "logoURL": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["name", "nameBn"]
+    }
+  },
+  "firestore": {
+    "/members/{memberId}": {
+      "schema": "Member",
+      "description": "Collection of all members"
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Collection of all payment transactions"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Collection of all organization expenses"
+    },
+    "/settings/config": {
+      "schema": "AppSettings",
+      "description": "Global application configuration"
+    }
+  }
+}

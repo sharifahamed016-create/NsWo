@@ -1,0 +1,8 @@
+{
+  "name": "NSWO Member Management",
+  "description": "Professional Member Management System with real-time tracking, payment receipts, and financial reports.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

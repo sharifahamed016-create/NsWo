@@ -1,0 +1,134 @@
+@import url('https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Hind Siliguri", "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #d97706; /* amber-600 gold scrollbar */
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #fbbf24;
+  }
+
+  /* Force highly readable dark slate text inside all white / light-gray / light-colored containers and cards */
+  .bg-white,
+  .bg-slate-50,
+  .bg-slate-100,
+  .bg-slate-200,
+  .bg-[#f8fafc],
+  .bg-emerald-50,
+  .bg-amber-50,
+  .bg-rose-50,
+  .bg-sky-50,
+  .bg-blue-50 {
+    color: #0f172a !important; /* Force slate-900 */
+  }
+
+  /* Ensure text-white is still respected if explicitly applied on dark child badges inside light parents */
+  .bg-white .text-white,
+  .bg-slate-50 .text-white,
+  .bg-slate-100 .text-white,
+  .bg-[#f8fafc] .text-white,
+  .bg-emerald-50 .text-white,
+  .bg-amber-50 .text-white,
+  .bg-rose-50 .text-white {
+    color: #ffffff !important;
+  }
+
+  /* Force solid dark slate text colors on all input fields, drop downs, and textareas inside light backgrounds */
+  .bg-white input, .bg-white select, .bg-white textarea,
+  .bg-slate-50 input, .bg-slate-50 select, .bg-slate-50 textarea,
+  .bg-slate-100 input, .bg-slate-100 select, .bg-slate-100 textarea,
+  .bg-emerald-50 input, .bg-emerald-50 select, .bg-emerald-50 textarea,
+  .bg-amber-50 input, .bg-amber-50 select, .bg-amber-50 textarea,
+  .bg-rose-50 input, .bg-rose-50 select, .bg-rose-50 textarea {
+    color: #0f172a !important;
+  }
+
+  /* Ensure labels inside light backgrounds are fully readable dark slate colors */
+  .bg-white label,
+  .bg-slate-50 label,
+  .bg-slate-100 label,
+  .bg-[#f8fafc] label,
+  .bg-emerald-50 label,
+  .bg-amber-50 label,
+  .bg-rose-50 label {
+    color: #334155 !important; /* Force slate-700 */
+  }
+
+  /* Force placeholders inside input fields to be visible cool gray */
+  .bg-white ::placeholder,
+  .bg-slate-50 ::placeholder,
+  .bg-slate-100 ::placeholder,
+  .bg-[#f8fafc] ::placeholder {
+    color: #94a3b8 !important; /* Force slate-400 */
+  }
+
+  /* Enhance light background text-slate-400, text-slate-500, text-slate-300 elements to be safe readable colors */
+  .bg-white .text-slate-300, .bg-slate-50 .text-slate-300,
+  .bg-white .text-slate-400, .bg-slate-50 .text-slate-400,
+  .bg-white .text-slate-500, .bg-slate-50 .text-slate-500,
+  .bg-white .text-slate-600, .bg-slate-50 .text-slate-600 {
+    color: #475569 !important; /* Force slate-600 */
+  }
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Premium Dark Green, Black, and Gold Glassmorphism */
+.premium-glass {
+  background: rgba(4, 26, 15, 0.45);
+  backdrop-filter: blur(14px) saturate(120%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%);
+  border: 1px solid rgba(217, 119, 6, 0.15); /* gold outline */
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+}
+
+.premium-glass-emerald {
+  background: rgba(16, 185, 129, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(16, 185, 129, 0.15);
+  box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.25);
+}
+
+.premium-glass-dark {
+  background: rgba(2, 6, 4, 0.82);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(217, 119, 6, 0.2);
+}
+
+.premium-glass-hover:hover {
+  border-color: rgba(245, 158, 11, 0.45); /* richer gold highlight */
+  box-shadow: 0 12px 36px 0 rgba(245, 158, 11, 0.08);
+  transform: translateY(-2px);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.gold-dim-glow {
+  text-shadow: 0 0 10px rgba(245, 158, 11, 0.25);
+}
+
+.gold-border-glow {
+  box-shadow: 0 0 15px rgba(245, 158, 11, 0.15);
+}
+
