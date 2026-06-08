@@ -9,7 +9,8 @@ import {
   Users, TrendingUp, AlertCircle, Wallet, 
   ArrowUpRight, ArrowDownRight, Calendar, PlusCircle,
   Cloud, RefreshCw, CheckCircle2, Database, Shield, 
-  Activity, Wifi, UserCheck, Server, HardDrive, Smartphone
+  Activity, Wifi, UserCheck, Server, HardDrive, Smartphone,
+  Trash2, X, Receipt
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, 
@@ -28,7 +29,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ setActiveTab }: DashboardProps) {
-  const { t, language, user, settings } = useAppContext();
+  const { t, language, user, settings, isAdmin, isModerator } = useAppContext();
 
   // Helper to check if themeColor is light to prevent white text on white backgrounds
   const isThemeLight = (() => {
@@ -46,6 +47,27 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
   const { payments, deletePayment } = usePayments();
   const { expenses } = useExpenses();
   const { events, donors } = useEvents();
+
+  // New states for the interactive detailed admissions list and deletion
+  const [showAdmissionModal, setShowAdmissionModal] = React.useState(false);
+  const [paymentToDelete, setPaymentToDelete] = React.useState<any | null>(null);
+  const [isDeleting, setIsDeleting] = React.useState(false);
+
+  // Compute the exact payments of type ADMISSION or SUBSCRIPTION for inactive/deleted/non-standard members
+  const admissionAndNonLedgerPayments = useMemo(() => {
+    const standardLedgerMemberIds = new Set(
+      members
+        .filter(m => (!m.roleType || m.roleType === MemberRoleType.GENERAL || m.roleType === MemberRoleType.MANAGEMENT) && m.includeInMonthlyLedger !== false)
+        .map(m => m.id)
+    );
+
+    return payments.filter(p => {
+      const isAdmission = p.type === PaymentType.ADMISSION;
+      const isNonStandardSub = (!p.type || p.type === PaymentType.SUBSCRIPTION) && 
+        (p.memberId === 'external' || !standardLedgerMemberIds.has(p.memberId));
+      return isAdmission || isNonStandardSub;
+    });
+  }, [payments, members]);
 
   // Duplicate payment audit and fix states
   const [isFixingDuplicates, setIsFixingDuplicates] = React.useState(false);
@@ -647,24 +669,34 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
             </div>
 
             {/* Admission Fee & Non-Ledger Subscriptions */}
-            <div className="p-4 bg-slate-950/60 rounded-2xl border border-blue-500/10 flex flex-col justify-between">
+            <div 
+              onClick={() => setShowAdmissionModal(true)}
+              className="p-4 bg-slate-950/60 rounded-2xl border border-blue-500/10 hover:border-blue-500/35 hover:bg-slate-950/80 cursor-pointer flex flex-col justify-between transition-all duration-300 group hover:scale-[1.01] active:scale-95 shadow-lg relative overflow-hidden"
+              title={language === 'bn' ? 'তালিকা দেখতে এখানে ক্লিক করুন' : 'Click here to view payment list'}
+            >
               <div>
                 <div className="flex items-center justify-between">
                   <span className="px-2.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20">
                     {language === 'bn' ? 'ভর্তি ফি ও রেজিষ্ট্রেশন' : 'Entrance / Reg Fees'}
                   </span>
+                  <span className="text-[9px] font-black text-blue-300 bg-blue-500/15 px-2 py-0.5 rounded-lg border border-blue-500/20 group-hover:bg-blue-500/30 transition-all duration-300">
+                    {language === 'bn' ? 'তালিকা বা ডিলিট 🔍' : 'View List / Delete 🔍'}
+                  </span>
                 </div>
-                <h4 className="text-xs font-bold text-slate-400 mt-2">
+                <h4 className="text-xs font-bold text-slate-400 mt-2 flex items-center gap-1.5">
                   {language === 'bn' ? 'ভর্তি ফি ও নন-লেজার চাঁদা ফান্ড' : 'Admission & Non-Ledger Subs'}
                 </h4>
                 <p className="text-[10px] text-slate-500 leading-normal mt-1 font-semibold">
                   {language === 'bn' 
-                    ? 'নতুন সদস্যদের প্রাথমিক ভর্তি ফি (ভর্তি বাবদ গৃহীত ফি) এবং নিষ্ক্রিয় বা লেজার বহির্ভূত বিশেষ চাঁদা।' 
+                    ? 'নতুন सदस्यों প্রাথমিক ভর্তি ফি (ভর্তি বাবদ গৃহীত ফি) এবং নিষ্ক্রিয় বা লেজার বহির্ভূত বিশেষ চাঁদা।' 
                     : 'Initial registration fees from new members and non-ledger subscription values.'}
                 </p>
               </div>
-              <div className="text-lg font-black text-blue-300 font-mono mt-4 pt-2 border-t border-slate-800/40">
-                ৳ {(stats.admissionPaid + stats.nonStandardSubscriptionPaid).toLocaleString()}
+              <div className="text-lg font-black text-blue-300 font-mono mt-4 pt-2 border-t border-slate-800/40 flex justify-between items-center">
+                <span>৳ {(stats.admissionPaid + stats.nonStandardSubscriptionPaid).toLocaleString()}</span>
+                <span className="text-[9px] text-blue-400 font-bold tracking-tight opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                  {language === 'bn' ? 'রশিদ ডিলিট করতে ক্লিক করুন →' : 'Click to delete receipts →'}
+                </span>
               </div>
             </div>
 
@@ -1076,6 +1108,193 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
             </p>
           </div>
         </div>
+
+        {/* Admission & Non-Ledger Payments Interactive Modal */}
+        {showAdmissionModal && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+            <div 
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" 
+              onClick={() => setShowAdmissionModal(false)} 
+            />
+            <div className="relative w-full max-w-xl bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200">
+              {/* Modal Header */}
+              <div 
+                className="p-6 text-white relative overflow-hidden shrink-0"
+                style={{ backgroundColor: settings.themeColor || '#1d4ed8' }}
+              >
+                <div className="absolute right-0 bottom-0 opacity-10 translate-x-4 translate-y-4">
+                  <Receipt size={160} className="fill-current" />
+                </div>
+                <div className="relative z-10 flex items-center justify-between">
+                  <div className="space-y-1">
+                    <span className="inline-block px-2 py-0.5 roundedbg-white/20 text-white text-[9px] font-black uppercase tracking-wider bg-white/10 border border-white/10">
+                      🪙 {language === 'bn' ? 'ফান্ড স্টেটমেন্ট' : 'Fund Ledger'}
+                    </span>
+                    <h3 className="text-lg font-black">
+                      {language === 'bn' ? 'ভর্তি ফি ও নন-লেজার চাঁদা বিস্তারিত' : 'Admission & Non-Ledger Fund'}
+                    </h3>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setShowAdmissionModal(false)}
+                    className="p-2.5 hover:bg-white/15 active:scale-95 rounded-xl transition-all cursor-pointer text-white"
+                  >
+                    <X size={18} strokeWidth={2.5} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Description Banner */}
+              <div className="p-4 bg-slate-50 border-b border-slate-100 text-[11px] text-slate-500 font-bold leading-relaxed">
+                💡 {language === 'bn' 
+                  ? 'এই ফান্ডে প্রদর্শিত মোট পরিমাণটি নিচের রশিদগুলোর সমষ্টি। আপনি যদি হিসাব রিমোভ বা সংশোধন করতে চান, তবে তালিকার পাশের লাল বাটন ব্যবহার করে সরাসরি মুছে ফেলতে পারেন।' 
+                  : 'The total collection of this fund is computed from the receipts listed below. You can delete incorrect records using the trash buttons.'
+                }
+              </div>
+
+              {/* Transactions List Container */}
+              <div className="overflow-y-auto p-6 space-y-3 flex-1 scrollbar-thin">
+                {admissionAndNonLedgerPayments.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 text-xs font-bold">
+                    {language === 'bn' ? 'কোনো পরিশোধিত রশিদ রেকর্ড পাওয়া যায়নি।' : 'No verified payment records found.'}
+                  </div>
+                ) : (
+                  admissionAndNonLedgerPayments.map((p) => (
+                    <div 
+                      key={p.id} 
+                      className="p-3.5 bg-slate-50 rounded-2xl flex items-center justify-between border border-slate-100 hover:border-slate-200 hover:bg-slate-100/50 transition-all gap-4 select-none"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-blue-600 text-[10px] font-black">
+                            #{p.receiptNo}
+                          </span>
+                          <span className="text-slate-400 text-[10px] font-semibold flex items-center gap-0.5">
+                            <Calendar size={11} /> {p.month}
+                          </span>
+                          {p.type === PaymentType.ADMISSION ? (
+                            <span className="text-[8px] font-black bg-blue-50 text-blue-650 border border-blue-100 rounded px-1.5 py-0.5 uppercase tracking-wide shrink-0">
+                              {language === 'bn' ? 'ভর্তি ফি 🎟️' : 'Reg Fee 🎟️'}
+                            </span>
+                          ) : (
+                            <span className="text-[8px] font-black bg-purple-50 text-purple-650 border border-purple-100 rounded px-1.5 py-0.5 uppercase tracking-wide shrink-0">
+                              {language === 'bn' ? 'নন-লেজার 🪙' : 'Non-Ledger 🪙'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs font-black text-slate-800 mt-1.5 truncate">
+                          {language === 'bn' ? (p.memberNameBn || p.memberName) : p.memberName}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-sm font-black text-blue-600 font-mono">
+                          ৳ {p.amount.toLocaleString()}
+                        </div>
+                        
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPaymentToDelete(p);
+                            }}
+                            className="p-2 bg-red-50 hover:bg-red-100 text-red-650 hover:text-red-700 rounded-xl transition-all cursor-pointer active:scale-90"
+                            title={language === 'bn' ? 'রশিদ ডিলিট করুন' : 'Delete Receipt'}
+                          >
+                            <Trash2 size={14} strokeWidth={2.5} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Modal Footer Summary */}
+              <div className="p-6 bg-slate-50 border-t border-slate-100 flex items-center justify-between shrink-0">
+                <div className="text-xs font-bold text-slate-500">
+                  {language === 'bn' ? 'মোট রশিদের সংখ্যা' : 'Total receipts count'}: <span className="text-slate-900 font-extrabold">{admissionAndNonLedgerPayments.length}</span>
+                </div>
+                <div className="text-sm font-black text-slate-900">
+                  {language === 'bn' ? 'মোট ফান্ড পরিমাণ' : 'Total fund amount'}: <span className="text-blue-600 font-mono">৳ {admissionAndNonLedgerPayments.reduce((sum, p) => sum + p.amount, 0).toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Delete Confirmation Dialog */}
+        {paymentToDelete && (
+          <div className="fixed inset-0 z-[250] flex items-center justify-center p-4">
+            <div 
+              className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+              onClick={() => setPaymentToDelete(null)}
+            />
+            <div className="relative w-full max-w-sm bg-white rounded-[2.5rem] p-8 shadow-2xl border border-slate-100 text-center animate-in fade-in zoom-in-95 duration-150">
+              <div className="w-16 h-16 bg-red-50 text-red-650 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm">
+                <Trash2 size={26} strokeWidth={2.5} />
+              </div>
+              
+              <h4 className="text-lg font-black text-slate-900 mb-2">
+                {language === 'bn' ? 'আদায় রশিদটি ডিলিট করতে চান?' : 'Confirm deletion?'}
+              </h4>
+              
+              <p className="text-slate-500 text-xs font-bold leading-relaxed mb-6">
+                {language === 'bn' 
+                  ? `আপনি কি নিশ্চিত যে "${paymentToDelete.memberNameBn || paymentToDelete.memberName}" এর ${paymentToDelete.receiptNo} রশিদ নম্বরের ৳ ${paymentToDelete.amount.toLocaleString()} জমার হিসাবটি চিরতরে মুছে ফেলতে চান?`
+                  : `Are you sure you want to delete payment receipt #${paymentToDelete.receiptNo} of ৳ ${paymentToDelete.amount.toLocaleString()} from ${paymentToDelete.memberName}?`
+                }
+              </p>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => setPaymentToDelete(null)}
+                  className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-black uppercase transition-all"
+                >
+                  {language === 'bn' ? 'বাতিল' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={async () => {
+                    setIsDeleting(true);
+                    try {
+                      await deletePayment(
+                        paymentToDelete.id,
+                        paymentToDelete.amount,
+                        paymentToDelete.memberId,
+                        paymentToDelete.memberName
+                      );
+                      setPaymentToDelete(null);
+                      // If there is no other payment left, close the parent modal
+                      if (admissionAndNonLedgerPayments.length <= 1) {
+                        setShowAdmissionModal(false);
+                      }
+                    } catch (err) {
+                      console.error("Delete failed:", err);
+                      alert(language === 'bn' 
+                        ? 'ডিলিট করতে ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।' 
+                        : 'Deletion failed. Please try again.'
+                      );
+                    } finally {
+                      setIsDeleting(false);
+                    }
+                  }}
+                  className="flex-1 py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black uppercase transition-all shadow-lg shadow-red-200 flex items-center justify-center gap-2"
+                >
+                  {isDeleting ? (
+                    <span className="animate-pulse">{language === 'bn' ? 'মুছে ফেলা হচ্ছে...' : 'Deleting...'}</span>
+                  ) : (
+                    <span>{language === 'bn' ? 'নিশ্চিত ডিলিট' : 'Confirm'}</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </motion.div>
     </div>
   );

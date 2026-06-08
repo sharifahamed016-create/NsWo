@@ -36,6 +36,7 @@ export default function PaymentsList() {
   const { payments, loading, deletePayment } = usePayments();
   const { members } = useMembers();
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedType, setSelectedType] = useState<string>('ALL');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [paymentToDelete, setPaymentToDelete] = useState<Payment | null>(null);
@@ -43,12 +44,19 @@ export default function PaymentsList() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const filteredPayments = useMemo(() => {
-    return payments.filter(p => 
-      p.memberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (p.memberNameBn && p.memberNameBn.includes(searchTerm)) ||
-      p.receiptNo.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [payments, searchTerm]);
+    return payments.filter(p => {
+      const matchesSearch = 
+        p.memberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (p.memberNameBn && p.memberNameBn.includes(searchTerm)) ||
+        p.receiptNo.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      if (!matchesSearch) return false;
+      
+      if (selectedType === 'ALL') return true;
+      if (selectedType === 'SUBSCRIPTION') return !p.type || p.type === 'SUBSCRIPTION';
+      return p.type === selectedType;
+    });
+  }, [payments, searchTerm, selectedType]);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -86,17 +94,43 @@ export default function PaymentsList() {
         )}
       </div>
 
-      {/* Search Bar */}
-      <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-          <input 
-            type="text" 
-            placeholder={t.search + ' by Name or Receipt...'} 
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-50 border-none rounded-xl pl-12 pr-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 transition-all outline-none text-slate-700 font-medium"
-          />
+      {/* Search Bar & Filters */}
+      <div className="space-y-4">
+        <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input 
+              type="text" 
+              placeholder={t.search + ' by Name or Receipt...'} 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-slate-50 border-none rounded-xl pl-12 pr-4 py-3 text-sm focus:ring-2 focus:ring-emerald-500 transition-all outline-none text-slate-700 font-medium"
+            />
+          </div>
+        </div>
+
+        {/* Category Filter Tabs */}
+        <div className="flex flex-wrap gap-2 pb-1 overflow-x-auto scrollbar-hide">
+          {[
+            { id: 'ALL', labelBn: 'সব জমার খতিয়ান', labelEn: 'All Receipts' },
+            { id: 'SUBSCRIPTION', labelBn: 'মাসিক চাঁদা', labelEn: 'Subscription' },
+            { id: 'ADMISSION', labelBn: 'ভর্তি ফি', labelEn: 'Entrance / Admission' },
+            { id: 'DONATION', labelBn: 'বিশেষ অনুদান', labelEn: 'Donations' },
+            { id: 'OTHER', labelBn: 'অন্যান্য ফান্ড', labelEn: 'Other Funds' }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSelectedType(tab.id)}
+              className={`px-4 py-2.5 text-xs font-black rounded-xl border transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
+                selectedType === tab.id
+                  ? 'bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-100/50'
+                  : 'bg-white text-slate-600 border-slate-150 hover:bg-slate-50'
+              }`}
+            >
+              {language === 'bn' ? tab.labelBn : tab.labelEn}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -164,8 +198,27 @@ export default function PaymentsList() {
                             <span className="inline-flex items-center text-[8px] font-black px-1.5 py-0.5 rounded-md bg-slate-50 text-slate-600 border border-slate-150 uppercase font-mono tracking-wider">{payment.method || 'Cash'}</span>
                           )}
 
+                          {/* Payment Type Badge */}
+                          {(!payment.type || payment.type === 'SUBSCRIPTION') ? (
+                            <span className="inline-flex items-center text-[8px] font-black px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-850 border border-emerald-100 uppercase tracking-wider">
+                              {language === 'bn' ? 'মাসিক চাঁদা' : 'Sub'}
+                            </span>
+                          ) : payment.type === 'ADMISSION' ? (
+                            <span className="inline-flex items-center text-[8px] font-black px-1.5 py-0.5 rounded bg-blue-50 text-blue-750 border border-blue-100 uppercase tracking-wider">
+                              {language === 'bn' ? 'ভর্তি ফি 🎟️' : 'Admission 🎟️'}
+                            </span>
+                          ) : payment.type === 'DONATION' ? (
+                            <span className="inline-flex items-center text-[8px] font-black px-1.5 py-0.5 rounded bg-amber-50 text-amber-750 border border-amber-100 uppercase tracking-wider">
+                              {language === 'bn' ? 'দান / অনুদান 💝' : 'Donation 💝'}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center text-[8px] font-black px-1.5 py-0.5 rounded bg-purple-50 text-purple-750 border border-purple-100 uppercase tracking-wider">
+                              {language === 'bn' ? 'অন্যান্য ফান্ড 🪙' : 'Other Fund 🪙'}
+                            </span>
+                          )}
+
                           {(payment.paymentStatus === 'verified' || payment.trxId) && (
-                            <span className="inline-flex items-center gap-0.5 text-[7px] font-black px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 border border-emerald-100 uppercase tracking-wider">
+                            <span className="inline-flex items-center gap-0.5 text-[7px] font-black px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-650 border border-emerald-100 uppercase tracking-wider">
                               ✓ Verified
                             </span>
                           )}

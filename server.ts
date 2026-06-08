@@ -77,19 +77,86 @@ Capability Guidance:
 Please write clean, Markdown-formatted Bengali responses. Use gold-standard bullet formatting, tables, or bold markings so the user is impressed with the premium analytical precision.`;
 
     const client = getGeminiClient();
-    const response = await client.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.7,
+    const modelsToTry = [
+      "gemini-3.5-flash",
+      "gemini-3.1-flash-lite",
+      "gemini-flash-latest"
+    ];
+
+    let response = null;
+    let lastError = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`[Copilot] Attempting content generation with model: ${modelName}`);
+        const attempt = await client.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            systemInstruction: systemPrompt,
+            temperature: 0.7,
+          }
+        });
+        if (attempt && attempt.text) {
+          response = attempt;
+          console.log(`[Copilot] Successfully generated content with model: ${modelName}`);
+          break;
+        }
+      } catch (err: any) {
+        console.error(`[Copilot] Error for model ${modelName}:`, err?.message || err);
+        lastError = err;
       }
-    });
+    }
+
+    if (!response) {
+      let friendlyError = "দুঃখিত, গুগল জেমিনি এআই সার্ভার এই মুহূর্তে অতিরিক্ত চাপ (high demand) অনুভব করছে। অনুগ্রহ করে একটু পরে আবার চেষ্টা করুন। (The AI service is currently experiencing high demand. Please try again in a few moments!)";
+      
+      if (lastError) {
+        let rawMessage = "";
+        if (typeof lastError === "string") {
+          rawMessage = lastError;
+        } else if (lastError && typeof lastError === "object") {
+          rawMessage = lastError.message || lastError.error?.message || JSON.stringify(lastError);
+        }
+
+        try {
+          const cleanedJsonStr = rawMessage.includes("Error for model") 
+            ? rawMessage.substring(rawMessage.indexOf("{")) 
+            : rawMessage;
+          const parsed = JSON.parse(cleanedJsonStr);
+          if (parsed?.error?.message) {
+            rawMessage = parsed.error.message;
+          } else if (parsed?.message) {
+            rawMessage = parsed.message;
+          }
+        } catch (e) {
+          // Keep rawMessage as is if not valid JSON
+        }
+
+        const lowerRaw = rawMessage.toLowerCase();
+        if (lowerRaw.includes("503") || lowerRaw.includes("demand") || lowerRaw.includes("unavailable") || lowerRaw.includes("resource_exhausted") || lowerRaw.includes("quota")) {
+          friendlyError = "দুঃখিত, গুগল জেমিনি এআই সার্ভারে উচ্চ চাহিদার কারণে সাময়িক বিভ্রাট বা কোটা শেষ হয়েছে। আমাদের অটো-ফেলওভার সিস্টেম অন্য মডেলগুলোও চেষ্টা করেছে কিন্তু সবগুলোই অতিরিক্ত চাপের সম্মুখীন হচ্ছে। অনুগ্রহ করে ৩০ সেকেন্ড পর আবার চেষ্টা করুন।";
+        } else if (lowerRaw.includes("api_key") || lowerRaw.includes("api key") || lowerRaw.includes("invalid key") || lowerRaw.includes("key not found")) {
+          friendlyError = "আসসালামু আলাইকুম! লাইভ এআই ফিচার সক্রিয় করার জন্য অনুগ্রহ করে Settings > Secrets প্যানেলে সঠিক `GEMINI_API_KEY` প্রদান করুন।";
+        } else {
+          // Clean up the error structure
+          friendlyError = `গুগল এআই সার্ভিস রেসপন্স: ${rawMessage.replace(/\{[^\}]*\}/g, "").trim() || rawMessage}`;
+        }
+      }
+      return res.status(503).json({ error: friendlyError });
+    }
 
     res.json({ text: response.text });
   } catch (error: any) {
     console.error("Gemini API Error:", error);
-    res.status(500).json({ error: error?.message || "Internal server error" });
+    let outerErrorMsg = error?.message || "Internal server error";
+    try {
+      const parsed = JSON.parse(outerErrorMsg);
+      if (parsed?.error?.message) {
+        outerErrorMsg = parsed.error.message;
+      }
+    } catch {}
+    res.status(500).json({ error: outerErrorMsg.replace(/\{[^\}]*\}/g, "").trim() || outerErrorMsg });
   }
 });
 
