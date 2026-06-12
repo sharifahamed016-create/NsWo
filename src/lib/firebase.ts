@@ -5,14 +5,14 @@
 
 import { initializeApp } from 'firebase/app';
 import { getAuth, initializeAuth, browserLocalPersistence, browserSessionPersistence, browserPopupRedirectResolver, GoogleAuthProvider } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, getDocFromServer, disableNetwork } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, getDocFromServer, disableNetwork } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager()
+    tabManager: persistentSingleTabManager({ forceOwnership: true })
   })
 }, (firebaseConfig as any).firestoreDatabaseId);
 

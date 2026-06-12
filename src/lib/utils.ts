@@ -28,6 +28,31 @@ export function getImageUrl(url?: string): string | undefined {
 }
 
 /**
+ * Pre-fetches and sanitizes all link stylesheets on the current page.
+ * Returns an array of objects containing the original href and the sanitized CSS text content.
+ * Cleans modern colors like oklch to ensure html2canvas never crashes.
+ */
+export async function getSanitizedStylesheets(): Promise<{ href: string; text: string }[]> {
+  const styleLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'));
+  const stylePromises = styleLinks.map(async (link) => {
+    try {
+      const href = (link as HTMLLinkElement).href;
+      if (!href) return null;
+      const res = await fetch(href);
+      if (!res.ok) return null;
+      const text = await res.text();
+      const cleanText = cleanCssText(text);
+      return { href, text: cleanText };
+    } catch (e) {
+      console.warn('Failed to pre-fetch stylesheet:', e);
+      return null;
+    }
+  });
+  const results = await Promise.all(stylePromises);
+  return results.filter((r): r is { href: string; text: string } => r !== null);
+}
+
+/**
  * Scans CSS text or style attributes and replaces unsupported modern color functions
  * (oklch, oklab, color-mix, color, hwb, lab, lch) with safe CSS Level 3 fallback RGB/RGBA colors.
  * Utilizes a parenthesis-matching state machine to correctly extract nested expressions (e.g. from var() or calc()).

@@ -34,6 +34,9 @@ export interface AppSettings {
   smsApiKey?: string;
   smsSenderId?: string;
   smsGatewayUrl?: string;
+
+  // Collection Portal Passcode
+  portalPasscode?: string;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -55,6 +58,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   whatsappTemplateEn: 'Assalamu Alaikum 🌿\n\nYour monthly subscription for {month} is still due.\n\nAmount: ৳{amount}\n\nPlease complete the payment as soon as possible.\n\nThank you ❤️\nNashirertek Social Welfare Association',
   automaticStopOnPayment: true,
   officialSealURL: '',
+
+  // Collection Portal Passcode Default
+  portalPasscode: '7890',
 
   // Robotic SMS defaults
   smsGatewayType: 'greenweb',

@@ -443,8 +443,16 @@ export default function Dashboard({ setActiveTab }: DashboardProps) {
         <div className="z-10 flex flex-wrap items-center gap-3 shrink-0">
           <button 
             type="button"
+            onClick={() => setActiveTab('bulk-entry')}
+            className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-950 px-5 py-3 rounded-2xl text-xs font-black shadow-lg transition-all active:scale-95 cursor-pointer transform scale-[1.02]"
+          >
+            <span>⚡</span>
+            {language === 'bn' ? 'চাঁদা এন্ট্রি হাব (Bulk)' : 'Subscription Hub (Bulk)'}
+          </button>
+          <button 
+            type="button"
             onClick={() => setActiveTab('payments')}
-            className="flex items-center gap-2 bg-white hover:bg-slate-100 text-slate-950 px-5 py-3 rounded-2xl text-xs font-black shadow-lg transition-all active:scale-95 cursor-pointer"
+            className="flex items-center gap-2 bg-white hover:bg-slate-100 text-slate-950 px-5 py-3 rounded-2xl text-xs font-black shadow-sm transition-all active:scale-95 cursor-pointer"
           >
             <PlusCircle size={14} />
             {language === 'bn' ? 'টাকা আদায়' : 'Collect Money'}

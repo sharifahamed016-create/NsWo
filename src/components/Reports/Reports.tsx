@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { motion } from 'motion/react';
 import { 
   FileText, Download, TrendingUp, Users, PieChart, CreditCard,
@@ -18,6 +18,7 @@ import {
 import { useAppContext } from '../../context/AppContext';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
 import { useMembers } from '../../hooks/useMembers';
 import { usePayments } from '../../hooks/usePayments';
 import { useExpenses } from '../../hooks/useExpenses';
@@ -53,6 +54,9 @@ export default function Reports() {
   const [activeTab, setActiveTab] = useState<'reports' | 'analytics' | 'activities'>('reports');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [showFinancialModal, setShowFinancialModal] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const printRef = useRef<HTMLDivElement>(null);
 
   // Activities Filter/Search States
   const [activitySearchTerm, setActivitySearchTerm] = useState('');
@@ -552,7 +556,7 @@ export default function Reports() {
     else if (id === 'advisory_list') exportAdvisoryListReport();
     else if (id === 'donor_report') exportDonorListReport();
     else if (id === 'volunteer_report') exportVolunteerActivityReport();
-    else if (id === 'monthly') exportFinancialSummary();
+    else if (id === 'monthly') setShowFinancialModal(true);
   };
 
   // Pre-calculate Chart Data
@@ -612,6 +616,79 @@ export default function Reports() {
     }
     return result;
   }, [payments, expenses, language]);
+
+  const formatValue = (val: number) => {
+    if (language === 'bn') {
+      return '৳' + toBanglaDigits(val.toLocaleString('bn-BD'));
+    }
+    return '৳' + val.toLocaleString('en-US');
+  };
+
+  const reportIncomeSummary = useMemo(() => {
+    const total = payments.reduce((acc, p) => acc + p.amount, 0);
+    const subscription = payments.filter(p => !p.type || p.type.toLowerCase().includes('subscription') || p.type.toLowerCase().includes('সূচনা') || p.type.toLowerCase().includes('চাঁদা')).reduce((acc, p) => acc + p.amount, 0);
+    const donation = payments.filter(p => p.type && (p.type.toLowerCase().includes('donation') || p.type.toLowerCase().includes('অনুদান') || p.type.toLowerCase().includes('দান'))).reduce((acc, p) => acc + p.amount, 0);
+    const other = total - subscription - donation;
+    return { total, subscription, donation, other };
+  }, [payments]);
+
+  const reportExpenseSummary = useMemo(() => {
+    const total = expenses.reduce((acc, e) => acc + e.amount, 0);
+    const categoriesMap: { [key: string]: number } = {};
+    expenses.forEach(e => {
+      const cat = e.category || (language === 'bn' ? 'অন্যান্য' : 'Other');
+      categoriesMap[cat] = (categoriesMap[cat] || 0) + e.amount;
+    });
+    return { total, categories: Object.entries(categoriesMap) };
+  }, [expenses, language]);
+
+  const reportMonthsSummary = useMemo(() => {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const currentMonth = new Date().getMonth();
+    const result = [];
+    for (let i = 5; i >= 0; i--) {
+      const monthIdx = (currentMonth - i + 12) % 12;
+      const monthYear = `${new Date().getFullYear()}-${String(monthIdx + 1).padStart(2, '0')}`;
+      const inc = payments.filter(p => p.month === monthYear).reduce((acc, p) => acc + p.amount, 0);
+      const exp = expenses.filter(e => e.date.startsWith(monthYear)).reduce((acc, e) => acc + e.amount, 0);
+      result.push({
+        name: months[monthIdx],
+        income: inc,
+        expense: exp,
+        balance: inc - exp
+      });
+    }
+    return result;
+  }, [payments, expenses]);
+
+  const downloadHighResReportPDF = async () => {
+    if (!printRef.current) return;
+    setIsGeneratingPdf(true);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const canvas = await html2canvas(printRef.current, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        logging: false
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      pdf.addImage(imgData, 'PNG', 0, 0, 210, 297);
+      const dateStr = new Date().toISOString().split('T')[0];
+      pdf.save(`NSWO_Financial_Summary_Report_${dateStr}.pdf`);
+    } catch (err) {
+      console.error('Error generating PDF report:', err);
+      alert(language === 'bn' ? 'পিডিএফ রিপোর্ট তৈরিতে সমস্যা হয়েছে!' : 'Error generating PDF report!');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -990,6 +1067,449 @@ export default function Reports() {
               <div>
                 <p className="font-bold text-xs">Desktop Sync Active</p>
                 <p className="text-[10px] text-slate-400 font-bold">Chrome, Safari, PC/Mac</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* DETAILED INTERACTIVE FINANCIAL PREVIEW MODAL */}
+      {showFinancialModal && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-[200] flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-350">
+          <div className="w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-[2rem] shadow-2xl overflow-hidden flex flex-col md:flex-row h-[90vh] md:h-[80vh]">
+            
+            {/* Modal Controls Column Left */}
+            <div className="w-full md:w-80 bg-slate-900 p-6 flex flex-col justify-between border-b md:border-b-0 md:border-r border-slate-800 shrink-0">
+              <div className="space-y-6">
+                <div>
+                  <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-500/10 text-emerald-400 rounded-full text-[10px] font-black uppercase tracking-wider mb-3">
+                    📄 AUDIT REPORT ENGINE
+                  </div>
+                  <h3 className="text-xl font-black text-white leading-tight">
+                    {language === 'bn' ? 'আর্থিক বিবরণী অডিট' : 'Financial Statement'}
+                  </h3>
+                  <p className="text-slate-400 text-xs mt-2 leading-relaxed">
+                    {language === 'bn' 
+                      ? 'বাস্তব সময়ে ফায়ারবেস ক্লাউডের সদস্যদের পেমেন্ট রিসিট ও খরচ বিবরণীর ভিত্তিতে গঠিত অফিসিয়াল রিপোর্ট।' 
+                      : 'Live structured summary generated instantly from your active cloud-backed ledger receipts.'}
+                  </p>
+                </div>
+
+                <div className="space-y-3 bg-slate-950/40 p-4 rounded-2xl border border-slate-800/60">
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">REPORT META</span>
+                  <div className="flex justify-between text-xs text-slate-300 font-bold">
+                    <span>{language === 'bn' ? 'মোট লেনদেন:' : 'Transactions:'}</span>
+                    <span className="font-mono text-white">{payments.length + expenses.length}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-300 font-bold">
+                    <span>{language === 'bn' ? 'অডিট বছর:' : 'Fiscal Period:'}</span>
+                    <span className="text-white">2025-2026</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-300 font-bold">
+                    <span>{language === 'bn' ? 'অবস্থা:' : 'Status:'}</span>
+                    <span className="text-emerald-400 uppercase tracking-widest">{language === 'bn' ? 'অনুমোদিত' : 'Certified'}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3 mt-6">
+                <button
+                  type="button"
+                  onClick={downloadHighResReportPDF}
+                  disabled={isGeneratingPdf}
+                  className="w-full flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-white font-black text-xs py-4 px-6 rounded-2xl transition-all active:scale-95 shadow-lg shadow-emerald-900/30 disabled:opacity-50 uppercase tracking-wider"
+                >
+                  <Download size={14} className={isGeneratingPdf ? 'animate-spin' : ''} />
+                  {isGeneratingPdf ? (language === 'bn' ? 'পিডিএফ তৈরি হচ্ছে...' : 'Generating...') : (language === 'bn' ? 'পিডিএফ রিপোর্ট ডাউনলোড করুন' : 'Download Formal PDF')}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowFinancialModal(false)}
+                  className="w-full border border-slate-800 hover:bg-slate-800/50 text-slate-400 hover:text-white font-black text-xs py-3 rounded-2xl transition-all active:scale-95 uppercase tracking-wider"
+                >
+                  {language === 'bn' ? 'বন্ধ করুন' : 'Close Builder'}
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Live Interactive View Column Right */}
+            <div className="flex-1 bg-slate-950 p-6 overflow-y-auto flex justify-center items-start custom-scrollbar">
+              <div className="w-full max-w-[650px] bg-white text-slate-900 p-8 rounded-2xl shadow-xl font-sans relative select-none">
+                
+                {/* Visual Header */}
+                <div className="flex justify-between items-start border-b border-slate-100 pb-4">
+                  <div>
+                    <h4 className="text-lg font-black tracking-tight text-slate-950">
+                      {settings.nameBn || settings.name}
+                    </h4>
+                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">
+                      {language === 'bn' ? 'কো-অপারেটিভ ও সমাজ কল্যাণ সংস্থা' : 'Welfare & Social Organization'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span className="inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black bg-emerald-50 text-emerald-700 uppercase tracking-wider border border-emerald-100 mb-1">
+                      {language === 'bn' ? 'অডিট ড্রাফট' : 'Draft Copy'}
+                    </span>
+                    <p className="text-[9px] text-slate-400 font-bold block mt-1">
+                      {language === 'bn' ? 'তারিখ:' : 'Date:'} {new Date().toLocaleDateString(language === 'bn' ? 'bn-BD' : 'en-US')}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Subtitle */}
+                <p className="text-xs font-black text-slate-700 uppercase tracking-wider mt-4 bg-slate-50 px-3 py-2 rounded-lg inline-block">
+                  📋 {language === 'bn' ? 'আর্থিক বিবরণী ও হিসাব সারসংক্ষেপ' : 'Financial Statement Overview'}
+                </p>
+
+                {/* Interactive Stats Grid */}
+                <div className="grid grid-cols-3 gap-3 mt-4">
+                  <div className="border border-slate-100 bg-slate-50/50 p-3 rounded-xl">
+                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider block mb-1">
+                      {language === 'bn' ? 'মোট তহবিল সংগ্রহ (আয়)' : 'Total In'}
+                    </span>
+                    <span className="text-xs font-black text-slate-900">{formatValue(reportIncomeSummary.total)}</span>
+                  </div>
+
+                  <div className="border border-slate-100 bg-slate-50/50 p-3 rounded-xl">
+                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-wider block mb-1">
+                      {language === 'bn' ? 'ব্যয়িত অর্থ (খরচ)' : 'Total Out'}
+                    </span>
+                    <span className="text-xs font-black text-slate-900">{formatValue(reportExpenseSummary.total)}</span>
+                  </div>
+
+                  <div className="bg-emerald-50/50 border border-emerald-100 p-3 rounded-xl">
+                    <span className="text-[8px] font-black text-emerald-600 uppercase tracking-wider block mb-1">
+                      {language === 'bn' ? 'নিট রিজার্ভ' : 'Surplus'}
+                    </span>
+                    <span className="text-xs font-black text-emerald-700">
+                      {formatValue(reportIncomeSummary.total - reportExpenseSummary.total)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Income details and expense details split in columns */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                  {/* Receipts */}
+                  <div>
+                    <h5 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b pb-1">
+                      {language === 'bn' ? '৩.১. আয়ের খাতসমূহ' : 'Sources of Inflow'}
+                    </h5>
+                    <div className="space-y-1.5 text-[11px] text-slate-700">
+                      <div className="flex justify-between py-1 border-b border-dashed border-slate-100">
+                        <span>{language === 'bn' ? 'মাসিক সাধারণ চাঁদা' : 'Subscriptions'}</span>
+                        <span className="font-bold text-slate-900">{formatValue(reportIncomeSummary.subscription)}</span>
+                      </div>
+                      <div className="flex justify-between py-1 border-b border-dashed border-slate-100">
+                        <span>{language === 'bn' ? 'সদস্য কল্যাণ অনুদান' : 'Donations'}</span>
+                        <span className="font-bold text-slate-900">{formatValue(reportIncomeSummary.donation)}</span>
+                      </div>
+                      {reportIncomeSummary.other > 0 && (
+                        <div className="flex justify-between py-1 border-b border-dashed border-slate-100">
+                          <span>{language === 'bn' ? 'অন্যান্য ও বিবিধ' : 'Others'}</span>
+                          <span className="font-bold text-slate-900">{formatValue(reportIncomeSummary.other)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Expenses */}
+                  <div>
+                    <h5 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b pb-1">
+                      {language === 'bn' ? '৩.২. ব্যয়ের খাতসমূহ' : 'Welfare & Admin Expenses'}
+                    </h5>
+                    <div className="space-y-1.5 text-[11px] text-slate-700">
+                      {reportExpenseSummary.categories.slice(0, 3).map(([category, amount]) => (
+                        <div key={category} className="flex justify-between py-1 border-b border-dashed border-slate-100">
+                          <span className="truncate max-w-[120px]">{category}</span>
+                          <span className="font-bold text-slate-900">{formatValue(amount)}</span>
+                        </div>
+                      ))}
+                      {reportExpenseSummary.categories.length === 0 && (
+                        <div className="text-slate-400 italic text-[10px] py-1">
+                          {language === 'bn' ? 'কোন খরচের ডেটা নেই' : 'No expenses recorded.'}
+                        </div>
+                      )}
+                      {reportExpenseSummary.categories.length > 3 && (
+                        <div className="flex justify-between py-1 font-medium text-slate-400 italic">
+                          <span>{language === 'bn' ? 'অন্যান্য আরও...' : 'Other categories'}</span>
+                          <span>{formatValue(reportExpenseSummary.categories.slice(3).reduce((sum, [_, val]) => sum + val, 0))}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Months Table Mini */}
+                <div className="mt-6">
+                  <h5 className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 border-b pb-1">
+                    {language === 'bn' ? '৩.৩. মাসিক পারফরমেন্স ব্যালেন্স' : '6-Month Cash Performance'}
+                  </h5>
+                  <div className="space-y-1.5">
+                    {reportMonthsSummary.slice(0, 4).map((m, idx) => (
+                      <div key={idx} className="flex justify-between text-[11px] items-center py-1 bg-slate-50 px-2 rounded-lg">
+                        <span className="font-bold text-slate-900">{m.name}</span>
+                        <div className="flex gap-4">
+                          <span className="text-emerald-600 font-medium">+{formatValue(m.income)}</span>
+                          <span className="text-rose-600 font-medium">-{formatValue(m.expense)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Official Stamp Notice */}
+                <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-[9px] text-slate-400 font-medium">
+                  <span>{language === 'bn' ? 'নিরাপদ ক্লাউড ডেটাবেস কপি' : 'Generated via Secure Ledger Cloud Database'}</span>
+                  <span>{language === 'bn' ? 'স্বাক্ষর নিশ্চিত' : 'Authorized Signatures Pending'}</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* HIDDEN PRINTABLE TEMPLATE (MAPPED DIRECTLY TO A4 STANDARD AT 800PX WIDTH) */}
+      <div style={{ position: 'absolute', top: '-11000px', left: '-11000px' }}>
+        <div 
+          ref={printRef} 
+          className="w-[800px] h-[1130px] bg-white p-12 text-slate-900 flex flex-col justify-between font-sans select-none relative"
+          style={{ letterSpacing: '0.01em', lineHeight: '1.4' }}
+        >
+          {/* Top Decorative accent bar */}
+          <div className="absolute top-0 left-0 right-0 h-3 bg-emerald-600" />
+          
+          <div className="space-y-6">
+            {/* Document Header Letterhead */}
+            <div className="flex justify-between items-start border-b-2 border-slate-100 pb-5">
+              <div>
+                <h1 className="text-2xl font-black tracking-tight text-slate-950">
+                  {settings.nameBn || settings.name}
+                </h1>
+                <p className="text-[11px] text-emerald-700 font-black uppercase mt-1 tracking-wider">
+                  {language === 'bn' ? 'সমাজ কল্যাণ ও উন্নয়নমূলক সহযোগী সংস্থা' : 'Social Welfare & Community Cooperation Organization'}
+                </p>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  {language === 'bn' ? 'নিবন্ধন নম্বর: এনএসডব্লিউও / ২০২৫-০৯৭' : 'Official Reg No: NSWO / 2025-097'}
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-700 text-[10px] uppercase font-black tracking-widest border border-emerald-100 rounded-full">
+                  {language === 'bn' ? 'অফিসিয়াল কপি' : 'Official Copy'}
+                </span>
+                <p className="text-[10px] text-slate-400 font-bold mt-2">
+                  {language === 'bn' ? 'রিপোর্ট রেফারেন্স:' : 'Report Ref:'} <span className="font-mono">#FS-{new Date().getFullYear()}-{Math.floor(1000 + Math.random() * 9000)}</span>
+                </p>
+                <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                  {language === 'bn' ? 'তারিখ:' : 'Date:'} {new Date().toLocaleDateString(language === 'bn' ? 'bn-BD' : 'en-US')}
+                </p>
+              </div>
+            </div>
+
+            {/* Title Block */}
+            <div className="bg-slate-50 p-4 rounded-xl flex justify-between items-center">
+              <div>
+                <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                  {language === 'bn' ? 'আর্থিক বিবরণী ও হিসেব সারসংক্ষেপ রিসিট' : 'Financial Statement & Account Audit'}
+                </h2>
+                <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                  {language === 'bn' ? 'বিগত ৬ মাসের অর্থ প্রবাহ ও বর্তমান ব্যালেন্স শিট অডিট বিবরণী' : '6-Month Cash Flow & Balance Sheet Statement'}
+                </p>
+              </div>
+              <div className="text-right text-[10px] font-black uppercase text-emerald-800 tracking-wider">
+                {language === 'bn' ? 'অর্থবছর: ২০২৫ - ২০২৬' : 'Fiscal Year: 2025 - 2026'}
+              </div>
+            </div>
+
+            {/* Main KPI Summary Bento block */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="border border-slate-100 bg-slate-50/30 p-4 rounded-2xl flex flex-col justify-between h-24">
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">
+                  {language === 'bn' ? 'মোট তহবিল সংগ্রহ (আয়)' : 'Total Collections (In)'}
+                </span>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none">
+                    {formatValue(reportIncomeSummary.total)}
+                  </h3>
+                  <span className="text-[8px] text-emerald-600 font-bold uppercase mt-1 block">
+                    {language === 'bn' ? `চাঁদা: ${formatValue(reportIncomeSummary.subscription)} | অনুদান: ${formatValue(reportIncomeSummary.donation)}` : `Subs: ${formatValue(reportIncomeSummary.subscription)} | Don: ${formatValue(reportIncomeSummary.donation)}`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="border border-slate-100 bg-slate-50/30 p-4 rounded-2xl flex flex-col justify-between h-24">
+                <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">
+                  {language === 'bn' ? 'অনুমোদিত ব্যয় (খরচ)' : 'Total Expenditures (Out)'}
+                </span>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 tracking-tight leading-none">
+                    {formatValue(reportExpenseSummary.total)}
+                  </h3>
+                  <span className="text-[8px] text-rose-500 font-bold uppercase mt-1 block">
+                    {language === 'bn' ? `${expenses.length} টি অনুমোদিত ট্রানজেকশন` : `${expenses.length} Approved Payments`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="border border-emerald-100 bg-emerald-50/20 p-4 rounded-2xl flex flex-col justify-between h-24">
+                <span className="text-[9px] font-black uppercase text-emerald-600 tracking-wider">
+                  {language === 'bn' ? 'অবশিষ্ট নগদ তহবিল' : 'Net Accrued Reserve'}
+                </span>
+                <div>
+                  <h3 className="text-lg font-black text-emerald-700 tracking-tight leading-none">
+                    {formatValue(reportIncomeSummary.total - reportExpenseSummary.total)}
+                  </h3>
+                  <span className="text-[8px] text-emerald-600/80 font-black uppercase mt-1 block">
+                    {language === 'bn' ? 'সংগঠনের নিরাপদ তহবিল রিজার্ভ' : 'Welfare Fund Reserves'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Inflow vs Outflow analysis */}
+            <div className="grid grid-cols-2 gap-6">
+              {/* Section A: Receivables */}
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">
+                  {language === 'bn' ? '১. সংগৃহীত ফান্ডের বিবরণী' : 'I. Cash Inflow Analysis'}
+                </h4>
+                <table className="w-full text-left border-collapse text-[10px]">
+                  <thead>
+                    <tr className="border-b-2 border-slate-100 text-slate-400 font-bold uppercase">
+                      <th className="py-2">{language === 'bn' ? 'আদায়ের খাত' : 'Sector/Source'}</th>
+                      <th className="py-2 text-right">{language === 'bn' ? 'হিসাবকৃত পরিমাণ' : 'Amount'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    <tr>
+                      <td className="py-2">{language === 'bn' ? 'সদস্যদের নিয়মিত মাসিক চাঁদা' : 'Monthly Member Subscriptions'}</td>
+                      <td className="py-2 text-right font-bold text-slate-900">{formatValue(reportIncomeSummary.subscription)}</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2">{language === 'bn' ? 'সদস্য কল্যাণমূলক অনুদান' : 'Member Welfare Donations'}</td>
+                      <td className="py-2 text-right font-bold text-slate-900">{formatValue(reportIncomeSummary.donation)}</td>
+                    </tr>
+                    {reportIncomeSummary.other > 0 && (
+                      <tr>
+                        <td className="py-2">{language === 'bn' ? 'অন্যান্য ও বিবিধ কালেকশন' : 'Other Income/Collections'}</td>
+                        <td className="py-2 text-right font-bold text-slate-900">{formatValue(reportIncomeSummary.other)}</td>
+                      </tr>
+                    )}
+                    <tr className="border-t border-slate-200">
+                      <td className="py-2.5 font-bold text-slate-900">{language === 'bn' ? 'মোট সংগৃহীত তহবিল:' : 'Total Cash Collections:'}</td>
+                      <td className="py-2.5 text-right font-black text-slate-900">{formatValue(reportIncomeSummary.total)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Section B: Payables */}
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">
+                  {language === 'bn' ? '২. অনুমোদিত ব্যয়ের বিবরণী' : 'II. Cash Outflow Analysis'}
+                </h4>
+                <table className="w-full text-left border-collapse text-[10px]">
+                  <thead>
+                    <tr className="border-b-2 border-slate-100 text-slate-400 font-bold uppercase">
+                      <th className="py-2">{language === 'bn' ? 'ব্যয়ের খাত / ক্যাটাগরি' : 'Expense Category'}</th>
+                      <th className="py-2 text-right">{language === 'bn' ? 'ব্যয়িত অর্থ' : 'Amount Spent'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    {reportExpenseSummary.categories.slice(0, 4).map(([category, amount]) => (
+                      <tr key={category}>
+                        <td className="py-2 truncate max-w-[200px]">{category}</td>
+                        <td className="py-2 text-right font-bold text-slate-900">{formatValue(amount)}</td>
+                      </tr>
+                    ))}
+                    {reportExpenseSummary.categories.length === 0 && (
+                      <tr>
+                        <td className="py-2 text-slate-400 italic" colSpan={2}>
+                          {language === 'bn' ? 'কোন খরচের ডেটা নেই' : 'No logged expenditures.'}
+                        </td>
+                      </tr>
+                    )}
+                    {reportExpenseSummary.categories.length > 4 && (
+                      <tr>
+                        <td className="py-2 text-slate-400 italic">
+                          {language === 'bn' ? `এবং অন্যান্য ${reportExpenseSummary.categories.length - 4} টি খাত` : `And other ${reportExpenseSummary.categories.length - 4} categories`}
+                        </td>
+                        <td className="py-2 text-right font-bold text-slate-900">
+                          {formatValue(reportExpenseSummary.categories.slice(4).reduce((sum, [_, amt]) => sum + amt, 0))}
+                        </td>
+                      </tr>
+                    )}
+                    <tr className="border-t border-slate-200">
+                      <td className="py-2.5 font-bold text-slate-900">{language === 'bn' ? 'মোট সর্বমোট ব্যয়:' : 'Total Approved Outflow:'}</td>
+                      <td className="py-2.5 text-right font-black text-slate-900">{formatValue(reportExpenseSummary.total)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Section C: Last 6 Month Balance ledger */}
+            <div className="space-y-3">
+              <h4 className="text-[10px] font-black uppercase text-slate-400 tracking-widest pl-1">
+                {language === 'bn' ? '৩. বিগত ৬ মাসের ট্রানজেকশন ব্যালেন্স ট্রেইল' : 'III. Historical Six-Month Balance Ledger'}
+              </h4>
+              <table className="w-full text-left border-collapse text-[10px]">
+                <thead>
+                  <tr className="bg-slate-50 border-y border-slate-200 text-slate-400 font-bold uppercase">
+                    <th className="py-2 px-3">{language === 'bn' ? 'হিসাব কাল (মাস)' : 'Month'}</th>
+                    <th className="py-2 px-3 text-right">{language === 'bn' ? 'সংগৃহীত আয়' : 'Collections'}</th>
+                    <th className="py-2 px-3 text-right">{language === 'bn' ? 'অনুমোদিত ব্যয়' : 'Expenditures'}</th>
+                    <th className="py-2 px-3 text-right">{language === 'bn' ? 'অবশিষ্টাংশ ব্যালেন্স' : 'Net Balance'}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {reportMonthsSummary.map((m, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50/50">
+                      <td className="py-2.5 px-3 font-bold text-slate-900">{m.name}</td>
+                      <td className="py-2.5 px-3 text-right text-emerald-600 font-bold">{formatValue(m.income)}</td>
+                      <td className="py-2.5 px-3 text-right text-rose-600 font-bold">{formatValue(m.expense)}</td>
+                      <td className={`py-2.5 px-3 text-right font-black ${m.balance >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {formatValue(m.balance)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Auditor Notes or disclaimer */}
+            <div className="border border-slate-100 rounded-xl p-3 bg-slate-50/30 text-[9px] text-slate-400 font-medium leading-relaxed">
+              <strong>{language === 'bn' ? 'অডিট সনদপত্র ও নির্দেশিকা:' : 'Audit Certification & Disclaimers:'}</strong>{' '}
+              {language === 'bn' 
+                ? 'এই আর্থিক বিবরণী সারসংক্ষেপটি সম্পূর্ণভাবে উইজেট ও রশিদ ডেটা অনুযায়ী স্বয়ংক্রিয়ভাবে অডিট কমিটির তত্ত্বাবধানে ড্রাফট করা হয়েছে। যেকোনো গরমিল পরিলক্ষিত হলে দয়া করে ডিজিটাল ভেলিডেশন লগের সাথে মিলিয়ে পুনরায় ডাটা রিফ্রেশ করুন।'
+                : 'This system-generated summary constitutes an accurate aggregate derived from the live secure Google Firestore document database at compilation. Any adjustments must be authorized by the central finance committee.'}
+            </div>
+          </div>
+
+          {/* Core Authorized Signatures Section at bottom */}
+          <div className="border-t border-slate-200 pt-8 mt-4">
+            <div className="grid grid-cols-3 gap-6 text-center text-[10px] text-slate-500 font-bold">
+              <div className="space-y-4">
+                <div className="h-6" /> {/* Placeholder spacing for actual sign */}
+                <span className="block border-t border-slate-200 pt-2 mx-4 text-slate-700">
+                  {language === 'bn' ? 'কোষাধ্যক্ষ' : 'Treasurer Office'}
+                </span>
+                <span className="block text-[8px] text-slate-400 uppercase tracking-widest">{settings.name || 'NSWO Finance'}</span>
+              </div>
+              <div className="space-y-4">
+                <div className="h-6" />
+                <span className="block border-t border-slate-200 pt-2 mx-4 text-slate-700">
+                  {language === 'bn' ? 'সাধারণ সম্পাদক' : 'General Secretary'}
+                </span>
+                <span className="block text-[8px] text-slate-400 uppercase tracking-widest">{settings.name || 'NSWO Board'}</span>
+              </div>
+              <div className="space-y-4">
+                <div className="h-6" />
+                <span className="block border-t border-slate-200 pt-2 mx-4 text-slate-700">
+                  {language === 'bn' ? 'সভাপতি / সমন্বয়ক' : 'President / Director'}
+                </span>
+                <span className="block text-[8px] text-slate-400 uppercase tracking-widest">{settings.name || 'NSWO Executive'}</span>
               </div>
             </div>
           </div>

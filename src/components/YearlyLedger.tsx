@@ -8,7 +8,7 @@ import {
   Image, Eye, MoreVertical, Edit2, UserCheck, UserMinus
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
-import { cleanCssText, getImageUrl } from '../lib/utils';
+import { cleanCssText, getImageUrl, getSanitizedStylesheets } from '../lib/utils';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, Legend, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { useAppContext } from '../context/AppContext';
 import { useMembers } from '../hooks/useMembers';
@@ -726,6 +726,9 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
     try {
       setIsGeneratingImage(true);
 
+      // Async pre-fetch and clean all stylesheets to prevent html2canvas parsing crash on modern Tailwind classes!
+      const resolvedStyles = await getSanitizedStylesheets();
+
       // Clone the element to render a pristine version offscreen without any layout constraints
       const clone = element.cloneNode(true) as HTMLDivElement;
       
@@ -854,25 +857,17 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
             }
           });
 
-          // Process and replace linked stylesheets to resolve oklab/oklch parser crashes in compiled Tailwind files
+          // Process and replace linked stylesheets with our pre-fetched, pre-cleaned version
           clonedDoc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
-            try {
-              const sheet = (link as any).sheet as CSSStyleSheet | null;
-              if (sheet) {
-                let cssText = '';
-                const rules = sheet.cssRules || sheet.rules;
-                if (rules) {
-                  for (let i = 0; i < rules.length; i++) {
-                    cssText += rules[i].cssText + '\n';
-                  }
-                  const newStyle = clonedDoc.createElement('style');
-                  newStyle.textContent = cleanCssText(cssText);
-                  link.parentNode?.insertBefore(newStyle, link);
-                  link.parentNode?.removeChild(link);
-                }
-              }
-            } catch (e) {
-              console.warn('Could not process external stylesheet:', e);
+            const href = (link as HTMLLinkElement).href;
+            const styleObj = resolvedStyles.find(s => s && s.href === href);
+            if (styleObj) {
+              const newStyle = clonedDoc.createElement('style');
+              newStyle.textContent = styleObj.text;
+              link.parentNode?.insertBefore(newStyle, link);
+              link.parentNode?.removeChild(link);
+            } else {
+              link.parentNode?.removeChild(link);
             }
           });
         }
@@ -915,6 +910,44 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
     setIsGeneratingMemberImg(prev => ({ ...prev, [memberId]: true }));
 
     try {
+      // Async pre-fetch and clean all stylesheets to prevent html2canvas parsing crash on modern Tailwind classes!
+      const resolvedStyles = await getSanitizedStylesheets();
+
+      // Robustly pre-fetch images to safe base64 Data URIs to eliminate CORS/taint crashes on iOS / in iframe layouts!
+      const safeFetchBase64 = async (imgUrl?: string): Promise<string> => {
+        if (!imgUrl) return '';
+        if (imgUrl.startsWith('data:')) return imgUrl;
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 3500);
+          
+          const res = await fetch(getImageUrl(imgUrl) || imgUrl, { 
+            mode: 'cors',
+            signal: controller.signal 
+          });
+          clearTimeout(timeoutId);
+          
+          if (!res.ok) return imgUrl;
+          const blob = await res.blob();
+          return new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.onerror = () => resolve(imgUrl);
+            reader.readAsDataURL(blob);
+          });
+        } catch (e) {
+          console.warn(`CORS Base64 proxy load failed for ${imgUrl}:`, e);
+          return imgUrl;
+        }
+      };
+
+      const sealOrLogoUrl = settings?.officialSealURL || settings?.logoURL || '/nswo-logo.png';
+      const [base64Logo, base64Photo, base64Seal] = await Promise.all([
+        safeFetchBase64(sealOrLogoUrl),
+        item.member.photoURL ? safeFetchBase64(item.member.photoURL) : Promise.resolve(''),
+        settings?.officialSealURL ? safeFetchBase64(settings.officialSealURL) : Promise.resolve('')
+      ]);
+
       // Create beautifully styled staging container in the viewport layout region (Zero mobile cut-offs)
       const card = document.createElement('div');
       card.style.position = 'fixed';
@@ -955,8 +988,7 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
       const progressPercent = totalExpected > 0 ? Math.round((item.totalPaid / totalExpected) * 100) : 100;
       const progressPercentBn = toBanglaDigits(progressPercent);
 
-      const sealOrLogoUrl = settings?.officialSealURL || settings?.logoURL || '/nswo-logo.png';
-      const logoMarkup = `<img src="${getImageUrl(sealOrLogoUrl)}" style="width: 44px; height: 44px; object-fit: contain; border-radius: 50%; border: 2px solid #064e3b; background-color: #ffffff;" crossorigin="anonymous" referrerPolicy="no-referrer" />`;
+      const logoMarkup = `<img src="${base64Logo || '/nswo-logo.png'}" style="width: 44px; height: 44px; object-fit: contain; border-radius: 50%; border: 2px solid #064e3b; background-color: #ffffff;" />`;
 
       const headerHtml = `
         <div style="text-align: center; border-bottom: 2px dashed #cbd5e1; padding-bottom: 14px; margin-bottom: 16px;">
@@ -971,8 +1003,8 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
       `;
 
       let photoHtml = '';
-      if (item.member.photoURL) {
-        photoHtml = `<img src="${getImageUrl(item.member.photoURL)}" style="width: 68px; height: 76px; border-radius: 12px; object-fit: cover; border: 2.5px solid #064e3b; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);" crossorigin="anonymous" referrerPolicy="no-referrer" />`;
+      if (base64Photo) {
+        photoHtml = `<img src="${base64Photo}" style="width: 68px; height: 76px; border-radius: 12px; object-fit: cover; border: 2.5px solid #064e3b; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);" />`;
       } else {
         photoHtml = `<div style="width: 68px; height: 76px; border-radius: 12px; background-color: #f1f5f9; border: 2.5px dashed #94a3b8; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 20px; font-weight: 900; color: #475569;">${item.member.name.slice(0, 2).toUpperCase()}</div>`;
       }
@@ -1078,8 +1110,8 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
             <p style="margin: 3px 0 0 0; font-weight: bold; color: #64748b;">${isBn ? 'প্রিন্ট তারিখ:' : 'Generated date:'} ${toBanglaDigits(new Date().toLocaleDateString('bn-BD'))}</p>
           </div>
           <div style="margin-left: auto; text-align: right; display: flex; align-items: center; justify-content: flex-end;">
-            ${settings?.officialSealURL ? `
-              <img src="${getImageUrl(settings.officialSealURL)}" style="width: 52px; height: 52px; object-fit: contain; transform: rotate(-6deg); margin-right: 4px; border-radius: 4px;" crossorigin="anonymous" referrerPolicy="no-referrer" />
+            ${base64Seal ? `
+              <img src="${base64Seal}" style="width: 52px; height: 52px; object-fit: contain; transform: rotate(-6deg); margin-right: 4px; border-radius: 4px;" />
             ` : `<span style="font-size: 22px; filter: drop-shadow(1px 1px 1px rgba(0,0,0,0.15));">🌿</span>`}
           </div>
         </div>
@@ -1096,7 +1128,7 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
         backgroundColor: '#fcfdfc',
         scale: 2.5, // Crisp high pixel density for beautiful sharing quality
         useCORS: true,
-        allowTaint: false,
+        allowTaint: true,
         logging: false,
         width: 480, // Force portrait statement container width (no mobile resizing or scaling cutoff!)
         windowWidth: 480, // Force window width to render fully at exact resolution
@@ -1154,25 +1186,17 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
             }
           });
 
-          // Process and replace linked stylesheets to resolve oklab/oklch parser crashes in compiled Tailwind files
+          // Process and replace linked stylesheets with our pre-fetched, pre-cleaned version
           clonedDoc.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
-            try {
-              const sheet = (link as any).sheet as CSSStyleSheet | null;
-              if (sheet) {
-                let cssText = '';
-                const rules = sheet.cssRules || sheet.rules;
-                if (rules) {
-                  for (let i = 0; i < rules.length; i++) {
-                    cssText += rules[i].cssText + '\n';
-                  }
-                  const newStyle = clonedDoc.createElement('style');
-                  newStyle.textContent = cleanCssText(cssText);
-                  link.parentNode?.insertBefore(newStyle, link);
-                  link.parentNode?.removeChild(link);
-                }
-              }
-            } catch (e) {
-              console.warn('Could not process external stylesheet:', e);
+            const href = (link as HTMLLinkElement).href;
+            const styleObj = resolvedStyles.find(s => s && s.href === href);
+            if (styleObj) {
+              const newStyle = clonedDoc.createElement('style');
+              newStyle.textContent = styleObj.text;
+              link.parentNode?.insertBefore(newStyle, link);
+              link.parentNode?.removeChild(link);
+            } else {
+              link.parentNode?.removeChild(link);
             }
           });
         }
@@ -1229,6 +1253,33 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
     return brightness > 170;
   };
   const isLight = isLightColor(settings.themeColor);
+  const themeHex = settings.themeColor || '#059669';
+
+  const hexToRgba = (hexVal: string, alpha: number) => {
+    const c = hexVal.replace('#', '');
+    if (c.length !== 6) return `rgba(5, 150, 105, ${alpha})`;
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  };
+
+  const themeR = parseInt(themeHex.replace('#', '').substring(0, 2), 16) || 5;
+  const themeG = parseInt(themeHex.replace('#', '').substring(2, 4), 16) || 150;
+  const themeB = parseInt(themeHex.replace('#', '').substring(4, 6), 16) || 105;
+
+  const glassBg = isLight ? '#ffffff' : `rgba(${Math.round(themeR * 0.04)}, ${Math.round(themeG * 0.04)}, ${Math.round(themeB * 0.04)}, 0.8)`;
+
+  const themeStyles = {
+    primary: themeHex,
+    borderSemi: isLight ? '#f1f5f9' : hexToRgba(themeHex, 0.2),
+    borderStrong: isLight ? '#e2e8f0' : hexToRgba(themeHex, 0.35),
+    bgTranslucent: isLight ? '#f8fafc' : hexToRgba(themeHex, 0.07),
+    bgHover: isLight ? '#f1f5f9' : hexToRgba(themeHex, 0.15),
+    headerBg: isLight ? '#f8fafc' : hexToRgba(themeHex, 0.12),
+    bgCardDark: glassBg,
+    shadowLight: isLight ? '0 1px 3px rgba(0,0,0,0.05)' : `inset 0 1px 1px rgba(255,255,255,0.03), 0 8px 24px rgba(0,0,0,0.4)`
+  };
 
   return (
     <div className="space-y-6">
@@ -1314,12 +1365,16 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
       {/* Dynamic 6-Card Bento Stats Row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         {/* Card 1: All Members */}
-        <div className={`p-4 rounded-3xl border transition-all duration-300 flex items-center gap-3 ${
-          isLight 
-            ? 'bg-white border-slate-100 shadow-sm text-slate-800 hover:shadow-md' 
-            : 'bg-[#03150d] border-emerald-900/20 text-slate-100'
-        }`}>
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 shrink-0">
+        <div 
+          className="p-4 rounded-3xl border transition-all duration-300 flex items-center gap-3"
+          style={{
+            backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+            borderColor: isLight ? '#f1f5f9' : themeStyles.borderSemi,
+            color: isLight ? '#1e293b' : '#f1f5f9',
+            boxShadow: themeStyles.shadowLight
+          }}
+        >
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 shrink-0" style={{ color: themeHex, backgroundColor: `${themeHex}10` }}>
             <Users size={18} />
           </div>
           <div className="leading-tight min-w-0">
@@ -1333,52 +1388,16 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
           </div>
         </div>
 
-        {/* Card 2: Paying Members */}
-        <div className={`p-4 rounded-3xl border transition-all duration-300 flex items-center gap-3 ${
-          isLight 
-            ? 'bg-white border-slate-100 shadow-sm text-slate-800 hover:shadow-md' 
-            : 'bg-[#03150d] border-emerald-900/20 text-slate-100'
-        }`}>
-          <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500 shrink-0">
-            <UserCheck size={18} />
-          </div>
-          <div className="leading-tight min-w-0">
-            <p className={`text-[10px] uppercase font-bold tracking-wider ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-              {isBn ? 'মাসিক চাঁদা প্রদান করছে' : 'Paying Subscription'}
-            </p>
-            <p className={`text-base font-black ${isLight ? 'text-slate-900' : 'text-white'}`}>
-              {isBn ? `${toBanglaDigits(stats.paidMembersCount)} জন` : `${stats.paidMembersCount} Active`}
-            </p>
-            <p className="text-[9px] text-[#10b981] mt-0.5 font-black">{isBn ? 'সক্রিয় সদস্য' : 'Active Members'}</p>
-          </div>
-        </div>
-
-        {/* Card 3: Due Members */}
-        <div className={`p-4 rounded-3xl border transition-all duration-300 flex items-center gap-3 ${
-          isLight 
-            ? 'bg-white border-slate-100 shadow-sm text-slate-800 hover:shadow-md' 
-            : 'bg-[#03150d] border-emerald-900/20 text-slate-100'
-        }`}>
-          <div className="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center text-rose-500 shrink-0">
-            <UserMinus size={18} />
-          </div>
-          <div className="leading-tight min-w-0">
-            <p className={`text-[10px] uppercase font-bold tracking-wider ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
-              {isBn ? 'বকেয়া সদস্য' : 'Overdue Members'}
-            </p>
-            <p className={`text-base font-black ${isLight ? 'text-slate-900' : 'text-white'}`}>
-              {isBn ? `${toBanglaDigits(stats.dueMembersCount)} জন` : `${stats.dueMembersCount} Overdue`}
-            </p>
-            <p className="text-[9px] text-rose-500 mt-0.5 font-black">{isBn ? 'বকেয়া সদস্য' : 'Due Members'}</p>
-          </div>
-        </div>
-
         {/* Card 4: Total Due */}
-        <div className={`p-4 rounded-3xl border transition-all duration-300 flex items-center gap-3 ${
-          isLight 
-            ? 'bg-white border-slate-100 shadow-sm text-slate-800 hover:shadow-md' 
-            : 'bg-[#03150d] border-emerald-900/20 text-slate-100'
-        }`}>
+        <div 
+          className="p-4 rounded-3xl border transition-all duration-300 flex items-center gap-3"
+          style={{
+            backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+            borderColor: isLight ? '#f1f5f9' : themeStyles.borderSemi,
+            color: isLight ? '#1e293b' : '#f1f5f9',
+            boxShadow: themeStyles.shadowLight
+          }}
+        >
           <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-500 shrink-0">
             <span className="font-extrabold text-sm">৳</span>
           </div>
@@ -1394,12 +1413,16 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
         </div>
 
         {/* Card 5: This Month Revenue */}
-        <div className={`p-4 rounded-3xl border transition-all duration-300 flex items-center gap-3 ${
-          isLight 
-            ? 'bg-white border-slate-100 shadow-sm text-slate-800 hover:shadow-md' 
-            : 'bg-[#03150d] border-emerald-900/20 text-slate-100'
-        }`}>
-          <div className="w-10 h-10 rounded-xl bg-[#10b981]/10 flex items-center justify-center text-[#10b981] shrink-0">
+        <div 
+          className="p-4 rounded-3xl border transition-all duration-300 flex items-center gap-3"
+          style={{
+            backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+            borderColor: isLight ? '#f1f5f9' : themeStyles.borderSemi,
+            color: isLight ? '#1e293b' : '#f1f5f9',
+            boxShadow: themeStyles.shadowLight
+          }}
+        >
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 shrink-0" style={{ color: themeHex, backgroundColor: `${themeHex}1a` }}>
             <TrendingUp size={18} />
           </div>
           <div className="leading-tight min-w-0">
@@ -1409,24 +1432,26 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
             <p className={`text-base font-black ${isLight ? 'text-slate-900' : 'text-white'}`}>
               ৳ {formatCurrency(stats.thisMonthCollection, isBn)}
             </p>
-            <p className="text-[9px] text-[#10b981] mt-0.5 font-black">{isBn ? 'মোট আয়' : 'Target Income'}</p>
+            <p className="text-[9px] mt-0.5 font-black text-emerald-500" style={{ color: isLight ? '#059669' : '#10b981' }}>{isBn ? 'মোট আয়' : 'Target Income'}</p>
           </div>
         </div>
 
         {/* Card 6: Report Download Button */}
         <button
           onClick={handlePrint}
-          className={`p-4 rounded-3xl border text-left transition-all duration-300 flex items-center gap-3 cursor-pointer group hover:scale-[1.02] ${
-            isLight 
-              ? 'bg-blue-50/50 hover:bg-blue-50 border-blue-100 shadow-sm text-slate-800' 
-              : 'bg-[#031c11] hover:bg-emerald-900/20 border-emerald-800/20 text-slate-100'
-          }`}
+          className="p-4 rounded-3xl border text-left transition-all duration-300 flex items-center gap-3 cursor-pointer group hover:scale-[1.02]"
+          style={{
+            backgroundColor: isLight ? 'rgba(59, 130, 246, 0.05)' : themeStyles.bgTranslucent,
+            borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi,
+            color: isLight ? '#1e293b' : '#f1f5f9',
+            boxShadow: themeStyles.shadowLight
+          }}
         >
           <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500 shrink-0 group-hover:bg-blue-500 group-hover:text-white transition-all">
             <Download size={18} />
           </div>
           <div className="leading-tight min-w-0">
-            <p className={`text-[10px] uppercase font-bold tracking-wider ${isLight ? 'text-blue-600' : 'text-emerald-400'}`}>
+            <p className="text-[10px] uppercase font-bold tracking-wider" style={{ color: isLight ? '#2563eb' : themeStyles.primary }}>
               {isBn ? 'রিপোর্ট ডাউনলোড' : 'Download Report'}
             </p>
             <p className={`text-xs font-black ${isLight ? 'text-slate-800' : 'text-white'}`}>
@@ -1443,68 +1468,105 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
         <div className="xl:col-span-1 space-y-6 order-last xl:order-first">
           
           {/* Year Summary Card */}
-          <div className={`${
-            isLight 
-              ? 'bg-white border border-slate-200 text-slate-800' 
-              : 'bg-gradient-to-br from-[#0c2417] to-[#040f0a] border border-[#d97706]/20 text-white'
-          } rounded-3xl p-5 shadow-xl space-y-4`}>
-            <h3 className={`text-sm font-black ${isLight ? 'text-slate-850 border-b border-slate-100 pb-2' : 'text-amber-400 border-b border-emerald-950/60 pb-3'} tracking-wider uppercase flex items-center justify-between`}>
+          <div 
+            className="rounded-3xl p-5 shadow-xl space-y-4 border"
+            style={{
+              backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+              borderColor: isLight ? '#f1f5f9' : themeStyles.borderSemi,
+              color: isLight ? '#1e293b' : '#f1f5f9',
+              boxShadow: themeStyles.shadowLight
+            }}
+          >
+            <h3 className="text-sm font-black pb-3 tracking-wider uppercase flex items-center justify-between" style={{ borderBottom: `1px solid ${isLight ? '#cbd5e1' : themeStyles.borderSemi}`, color: isLight ? '#334155' : '#f59e0b' }}>
               <span>📊 {isBn ? `${toBanglaDigits(selectedYear)} সালের সমীকরণ` : `Year ${selectedYear} Stats`}</span>
               <span className="text-[10px] bg-amber-500/10 text-amber-400 px-2.5 py-0.5 rounded-md font-bold uppercase">LIVE</span>
             </h3>
 
             <div className="grid grid-cols-1 gap-3">
               {/* Stat Card 1 */}
-              <div className={`border rounded-2xl p-3.5 flex items-center justify-between ${
-                isLight ? 'bg-slate-50 border-slate-200 text-slate-800' : 'bg-black/20 border border-emerald-950/70 text-white'
-              }`}>
+              <div 
+                className="border rounded-2xl p-3.5 flex items-center justify-between"
+                style={{
+                  backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.2)',
+                  borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi,
+                  color: isLight ? '#1e293b' : '#f1f5f9'
+                }}
+              >
                 <div className="space-y-1">
                   <p className={`text-[10px] uppercase tracking-widest ${isLight ? 'text-slate-500' : 'text-slate-400'} font-bold`}>{isBn ? 'মোট সদস্য সংখ্যা' : 'TOTAL MEMBERS'}</p>
                   <p className={`text-xl font-black ${isLight ? 'text-slate-900' : 'text-white'}`}>{isBn ? toBanglaDigits(stats.totalMembers) : stats.totalMembers}</p>
                 </div>
-                <div className={`w-10 h-10 ${isLight ? 'bg-amber-100/30 border-amber-500/10 text-amber-600' : 'bg-emerald-900/35 border-emerald-800/40 text-emerald-400'} border rounded-xl flex items-center justify-center font-black text-lg`}>
+                <div 
+                  className="border rounded-xl flex items-center justify-center font-black text-lg w-10 h-10"
+                  style={{
+                    backgroundColor: isLight ? 'rgba(245,158,11,0.05)' : `${themeHex}1a`,
+                    borderColor: isLight ? 'rgba(245,158,11,0.1)' : `${themeHex}33`,
+                    color: isLight ? '#d97706' : themeHex
+                  }}
+                >
                   <Users size={18} />
                 </div>
               </div>
 
               {/* Stat Card 2 */}
-              <div className={`border rounded-2xl p-3.5 flex items-center justify-between ${
-                isLight ? 'bg-slate-50 border-slate-200 text-slate-800' : 'bg-black/20 border border-[#10b981]/15 text-white'
-              }`}>
+              <div 
+                className="border rounded-2xl p-3.5 flex items-center justify-between"
+                style={{
+                  backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.2)',
+                  borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi,
+                  color: isLight ? '#1e293b' : '#f1f5f9'
+                }}
+              >
                 <div className="space-y-1">
-                  <p className={`text-[10px] uppercase tracking-widest ${isLight ? 'text-emerald-700' : 'text-[#10b981]'} font-bold`}>{isBn ? 'মোট সংগৃহীত চাঁদা' : 'TOTAL COLLECTION'}</p>
-                  <p className="text-xl font-black text-emerald-500">৳ {formatCurrency(stats.totalCollection, isBn)}</p>
+                  <p className="text-[10px] uppercase tracking-widest font-bold" style={{ color: isLight ? '#059669' : '#10b981' }}>{isBn ? 'মোট সংগৃহীত চাঁদা' : 'TOTAL COLLECTION'}</p>
+                  <p className="text-xl font-black text-emerald-500" style={{ color: isLight ? '#059669' : '#10b981' }}>৳ {formatCurrency(stats.totalCollection, isBn)}</p>
                 </div>
-                <div className={`w-10 h-10 ${isLight ? 'bg-emerald-100/40 border-emerald-500/10 text-emerald-600' : 'bg-emerald-900/35 border-emerald-800/40 text-emerald-400'} border rounded-xl flex items-center justify-center`}>
+                <div 
+                  className="border rounded-xl flex items-center justify-center font-black text-lg w-10 h-10"
+                  style={{
+                    backgroundColor: isLight ? 'rgba(16,185,129,0.05)' : `${themeHex}10`,
+                    borderColor: isLight ? 'rgba(16,185,129,0.1)' : `${themeHex}33`,
+                    color: isLight ? '#059669' : themeHex
+                  }}
+                >
                   <span>৳</span>
                 </div>
               </div>
 
               {/* Stat Card 3 */}
-              <div className={`border rounded-2xl p-3.5 flex items-center justify-between ${
-                isLight ? 'bg-slate-50 border-slate-200 text-slate-800' : 'bg-black/20 border border-rose-500/15 text-white'
-              }`}>
+              <div 
+                className="border rounded-2xl p-3.5 flex items-center justify-between"
+                style={{
+                  backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.2)',
+                  borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi,
+                  color: isLight ? '#1e293b' : '#f1f5f9'
+                }}
+              >
                 <div className="space-y-1">
-                  <p className={`text-[10px] uppercase tracking-widest ${isLight ? 'text-rose-600' : 'text-rose-400'} font-bold`}>{isBn ? 'মোট বকেয়া পরিমাণ' : 'TOTAL DUE_AMOUNT'}</p>
+                  <p className={`text-[10px] uppercase tracking-widest ${isLight ? 'text-rose-600' : 'text-rose-450'} font-bold`}>{isBn ? 'মোট বকেয়া পরিমাণ' : 'TOTAL DUE_AMOUNT'}</p>
                   <p className="text-xl font-black text-rose-500">৳ {formatCurrency(stats.totalDue, isBn)}</p>
                 </div>
-                <div className={`w-10 h-10 ${isLight ? 'bg-rose-100/30 border-rose-500/10 text-rose-600' : 'bg-rose-950/20 border-rose-900/30 text-rose-400'} border rounded-xl flex items-center justify-center`}>
+                <div className="w-10 h-10 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-xl flex items-center justify-center">
                   <AlertTriangle size={17} />
                 </div>
               </div>
             </div>
 
             {/* Collection Percentage Rate Radial */}
-            <div className={`border rounded-2xl p-4 flex items-center gap-4 ${
-              isLight ? 'bg-slate-50 border-slate-200 text-slate-800' : 'bg-black/30 border border-emerald-950/80 text-white'
-            }`}>
+            <div 
+              className="border rounded-2xl p-4 flex items-center gap-4 text-white"
+              style={{
+                backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.3)',
+                borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi
+              }}
+            >
               <div className="relative shrink-0 flex items-center justify-center">
                 <svg className="w-16 h-16 transform -rotate-90">
                   <circle
                     cx="32"
                     cy="32"
                     r="26"
-                    stroke={isLight ? '#e2e8f0' : '#101a14'}
+                    stroke={isLight ? '#cbd5e1' : '#111827'}
                     strokeWidth="5"
                     fill="transparent"
                   />
@@ -1512,7 +1574,7 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                     cx="32"
                     cy="32"
                     r="26"
-                    stroke="#10b981"
+                    stroke={themeHex}
                     strokeWidth="5"
                     fill="transparent"
                     strokeDasharray={2 * Math.PI * 26}
@@ -1521,63 +1583,69 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                     className="transition-all duration-1000 ease-out"
                   />
                 </svg>
-                <div className="absolute text-[11px] font-black text-emerald-500">
+                <div className="absolute text-[11px] font-black text-emerald-500" style={{ color: themeHex }}>
                   {toBanglaDigits(stats.collectionRate.toFixed(1))}%
                 </div>
               </div>
               <div className="leading-tight">
-                <p className={`text-xs font-bold ${isLight ? 'text-slate-800' : 'text-white'} uppercase tracking-wide`}>{isBn ? 'আদায়ের সার্থকতা হার' : 'Collection Rate'}</p>
+                <p className="text-xs font-bold uppercase tracking-wide" style={{ color: isLight ? '#1e293b' : '#f1f5f9' }}>{isBn ? 'আদায়ের সার্থকতা হার' : 'Collection Rate'}</p>
                 <p className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-slate-400'} mt-1`}>
                   {isBn ? 'মোট ধার্যকৃত চাঁদার ভিত্তিতে আদায় শতকরা হার হিসাব করা হয়েছে' : 'Percentage calculation of current subscription target vs paid records.'}
                 </p>
               </div>
             </div>
           </div>
-
-          {/* Monthly Subscription Line/Area chart overview */}
-          <div className={`${
-            isLight 
-              ? 'bg-white border border-slate-200 text-slate-800' 
-              : 'bg-[#03150d] border border-emerald-900/20 text-white'
-          } rounded-3xl p-4 shadow-xl`}>
-            <h3 className={`text-xs font-bold ${isLight ? 'text-slate-800' : 'text-slate-300'} uppercase tracking-wider mb-4 flex items-center justify-between`}>
+          <div 
+            className="rounded-3xl p-4 border transition-all duration-300"
+            style={{
+              backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+              borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi,
+              color: isLight ? '#1e293b' : '#f1f5f9',
+              boxShadow: themeStyles.shadowLight
+            }}
+          >
+            <h3 className="text-xs font-bold uppercase tracking-wider mb-4 flex items-center justify-between" style={{ color: isLight ? '#1e293b' : '#f1f5f9' }}>
               <span>📈 {isBn ? 'মাসভিত্তিক আদায়ের গ্রাফ' : 'Monthly Collection Overview'}</span>
-              <span className={`text-[9px] font-mono ${isLight ? 'text-emerald-700 font-extrabold' : 'text-emerald-500 font-black'}`}>{selectedYear}</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-md font-bold font-mono" style={{ backgroundColor: `${themeHex}10`, color: themeHex }}>{selectedYear}</span>
             </h3>
             <div className="h-44 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorCollection" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      <stop offset="5%" stopColor={themeHex} stopOpacity={0.4}/>
+                      <stop offset="95%" stopColor={themeHex} stopOpacity={0}/>
                     </linearGradient>
                   </defs>
-                  <CartesianGrid stroke={isLight ? '#f1f5f9' : '#092215'} strokeDasharray="3 3" />
-                  <XAxis dataKey="name" stroke={isLight ? '#64748b' : '#64748b'} fontSize={9} tickLine={false} />
-                  <YAxis stroke={isLight ? '#64748b' : '#64748b'} fontSize={9} tickLine={false} />
+                  <CartesianGrid stroke={isLight ? '#f1f5f9' : themeStyles.borderSemi} strokeDasharray="3 3" />
+                  <XAxis dataKey="name" stroke={isLight ? '#64748b' : '#94a3b8'} fontSize={9} tickLine={false} />
+                  <YAxis stroke={isLight ? '#64748b' : '#94a3b8'} fontSize={9} tickLine={false} />
                   <Tooltip 
                     contentStyle={{ 
-                      backgroundColor: isLight ? '#ffffff' : '#020b06', 
-                      borderColor: isLight ? '#cbd5e1' : '#10b981', 
+                      backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark, 
+                      borderColor: themeHex, 
                       borderRadius: '12px' 
                     }}
                     labelStyle={{ color: isLight ? '#475569' : '#94a3b8', fontWeight: 'bold', fontSize: '11px' }}
-                    itemStyle={{ color: '#10b981', fontSize: '11px', fontWeight: 'black' }}
+                    itemStyle={{ color: themeHex, fontSize: '11px', fontWeight: 'black' }}
                   />
-                  <Area type="monotone" dataKey="collection" stroke="#10b981" strokeWidth={2.5} fillOpacity={1} fill="url(#colorCollection)" />
+                  <Area type="monotone" dataKey="collection" stroke={themeHex} strokeWidth={2.5} fillOpacity={1} fill="url(#colorCollection)" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           </div>
 
           {/* Top Payers list Widget */}
-          <div className={`${
-            isLight 
-              ? 'bg-white border border-slate-200 text-slate-800' 
-              : 'bg-[#03150d] border border-emerald-900/20 text-white'
-          } rounded-3xl p-5 shadow-xl space-y-4`}>
-            <h3 className={`text-xs font-bold ${isLight ? 'text-slate-800' : 'text-slate-300'} uppercase tracking-widest border-b ${isLight ? 'border-slate-100' : 'border-emerald-950'} pb-2.5 flex items-center justify-between`}>
+          <div 
+            className="rounded-3xl p-5 border transition-all duration-300 space-y-4"
+            style={{
+              backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+              borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi,
+              color: isLight ? '#1e293b' : '#f1f5f9',
+              boxShadow: themeStyles.shadowLight
+            }}
+          >
+            <h3 className="text-xs font-bold uppercase tracking-widest pb-2.5 flex items-center justify-between" style={{ color: isLight ? '#1e293b' : '#f1f5f9', borderBottom: `1px solid ${isLight ? '#f1f5f9' : themeStyles.borderSemi}` }}>
               <span>🏆 {isBn ? 'শীর্ষ দাতাগণ' : 'Top Payers'}</span>
               <span className="text-[10px] text-amber-500 font-bold">{isBn ? 'চলতি বছর' : 'Current Year'}</span>
             </h3>
@@ -1586,23 +1654,26 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
             ) : (
               <div className="space-y-3">
                 {topPayers.map((item, index) => (
-                  <div key={item.member.id} className={`flex items-center justify-between p-2.5 rounded-xl ${
-                    isLight 
-                      ? 'bg-slate-50 border border-slate-100 hover:bg-slate-100/60' 
-                      : 'bg-black/15 border border-emerald-950 hover:bg-emerald-950/20'
-                  } transition-colors border`}>
+                  <div 
+                    key={item.member.id} 
+                    className="flex items-center justify-between p-2.5 rounded-xl transition-colors border bg-opacity-40"
+                    style={{
+                      backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.15)',
+                      borderColor: isLight ? '#f1f5f9' : themeStyles.borderSemi,
+                    }}
+                  >
                     <div className="flex items-center gap-2.5">
                       <div className="w-6.5 h-6.5 font-bold text-xs shrink-0 rounded-full bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-500">
                         {isBn ? toBanglaDigits(index + 1) : index + 1}
                       </div>
                       <div className="leading-tight">
-                        <p className={`text-xs font-bold ${isLight ? 'text-slate-850' : 'text-slate-100'} truncate max-w-[120px]`}>
+                        <p className={`text-xs font-bold ${isLight ? 'text-slate-800' : 'text-slate-100'} truncate max-w-[120px]`}>
                           {item.member.nameBn || item.member.name}
                         </p>
-                        <p className={`text-[9px] ${isLight ? 'text-slate-450' : 'text-slate-400'}`}>{item.member.memberId}</p>
+                        <p className={`text-[9px] ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>{item.member.memberId}</p>
                       </div>
                     </div>
-                    <div className="text-xs font-black text-emerald-500 bg-emerald-500/10 border border-emerald-800/10 px-2.5 py-1 rounded-lg">
+                    <div className="text-xs font-black px-2.5 py-1 rounded-lg" style={{ color: themeHex, backgroundColor: `${themeHex}10`, borderColor: `${themeHex}20` }}>
                       ৳ {formatCurrency(item.totalPaid, isBn)}
                     </div>
                   </div>
@@ -1612,74 +1683,78 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
           </div>
 
           {/* Quick Shortcuts Actions */}
-          <div className={`${
-            isLight 
-              ? 'bg-white border border-slate-200 text-slate-800' 
-              : 'bg-[#03150d] border border-emerald-900/20 text-white'
-          } rounded-3xl p-5 shadow-xl space-y-3.5`}>
-            <h4 className={`text-xs font-bold ${isLight ? 'text-slate-800' : 'text-slate-300'} uppercase tracking-wider`}>{isBn ? 'কুইক অ্যাকশন' : 'Quick Actions'}</h4>
+          <div 
+            className="rounded-3xl p-5 border transition-all duration-300 space-y-3.5"
+            style={{
+              backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+              borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi,
+              color: isLight ? '#1e293b' : '#f1f5f9',
+              boxShadow: themeStyles.shadowLight
+            }}
+          >
+            <h4 className="text-xs font-bold uppercase tracking-wider" style={{ color: isLight ? '#1e293b' : '#f1f5f9' }}>{isBn ? 'কুইক অ্যাকশন' : 'Quick Actions'}</h4>
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setActiveTab && setActiveTab('members')}
-                className={`p-3 border rounded-xl transition-all text-center flex flex-col items-center gap-1.5 focus:outline-none ${
-                  isLight 
-                    ? 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-850' 
-                    : 'bg-emerald-950/30 border border-emerald-900/40 hover:bg-emerald-900/30 text-white'
-                }`}
+                className="p-3 border rounded-xl transition-all text-center flex flex-col items-center gap-1.5 focus:outline-none hover:scale-[1.02] cursor-pointer"
+                style={{
+                  backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.15)',
+                  borderColor: isLight ? '#f1f5f9' : themeStyles.borderSemi,
+                }}
               >
-                <UserPlus size={16} className={isLight ? 'text-emerald-600' : 'text-slate-200'} />
-                <span className={`text-[10px] font-extrabold ${isLight ? 'text-slate-800' : 'text-white'}`}>{isBn ? 'সদস্য যোগ করুন' : 'Add Member'}</span>
+                <UserPlus size={16} style={{ color: themeHex }} />
+                <span className="text-[10px] font-extrabold" style={{ color: isLight ? '#1e293b' : '#f1f5f9' }}>{isBn ? 'সদস্য যোগ করুন' : 'Add Member'}</span>
               </button>
 
               <button
                 onClick={() => setActiveTab && setActiveTab('payments')}
-                className={`p-3 border rounded-xl transition-all text-center flex flex-col items-center gap-1.5 focus:outline-none ${
-                  isLight 
-                    ? 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-850' 
-                    : 'bg-emerald-950/30 border border-emerald-900/40 hover:bg-emerald-900/30 text-white'
-                }`}
+                className="p-3 border rounded-xl transition-all text-center flex flex-col items-center gap-1.5 focus:outline-none hover:scale-[1.02] cursor-pointer"
+                style={{
+                  backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.15)',
+                  borderColor: isLight ? '#f1f5f9' : themeStyles.borderSemi,
+                }}
               >
                 <PlusCircle size={16} className="text-amber-500" />
-                <span className={`text-[10px] font-extrabold ${isLight ? 'text-slate-800' : 'text-white'}`}>{isBn ? 'পেমেন্ট এন্ট্রি' : 'Add Receipt'}</span>
+                <span className="text-[10px] font-extrabold" style={{ color: isLight ? '#1e293b' : '#f1f5f9' }}>{isBn ? 'পেমেন্ট এন্ট্রি' : 'Add Receipt'}</span>
               </button>
 
               <button
                 onClick={() => setActiveTab && setActiveTab('expenses')}
-                className={`p-3 border rounded-xl transition-all text-center flex flex-col items-center gap-1.5 focus:outline-none ${
-                  isLight 
-                    ? 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-850' 
-                    : 'bg-emerald-950/30 border border-emerald-900/40 hover:bg-emerald-900/30 text-white'
-                }`}
+                className="p-3 border rounded-xl transition-all text-center flex flex-col items-center gap-1.5 focus:outline-none hover:scale-[1.02] cursor-pointer"
+                style={{
+                  backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.15)',
+                  borderColor: isLight ? '#f1f5f9' : themeStyles.borderSemi,
+                }}
               >
                 <DollarSign size={16} className="text-rose-500" />
-                <span className={`text-[10px] font-extrabold ${isLight ? 'text-slate-800' : 'text-white'}`}>{isBn ? 'খরচ হিসাব' : 'Add Expense'}</span>
+                <span className="text-[10px] font-extrabold" style={{ color: isLight ? '#1e293b' : '#f1f5f9' }}>{isBn ? 'খরচ হিসাব' : 'Add Expense'}</span>
               </button>
 
               <button
                 onClick={() => setActiveTab && setActiveTab('google-sheets')}
-                className={`p-3 border rounded-xl transition-all text-center flex flex-col items-center gap-1.5 focus:outline-none ${
-                  isLight 
-                    ? 'bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-850' 
-                    : 'bg-emerald-950/30 border border-emerald-900/40 hover:bg-emerald-900/30 text-white'
-                }`}
+                className="p-3 border rounded-xl transition-all text-center flex flex-col items-center gap-1.5 focus:outline-none hover:scale-[1.02] cursor-pointer"
+                style={{
+                  backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.15)',
+                  borderColor: isLight ? '#f1f5f9' : themeStyles.borderSemi,
+                }}
               >
-                <FileSpreadsheet size={16} className="text-[#10b981]" />
-                <span className={`text-[10px] font-extrabold ${isLight ? 'text-slate-800' : 'text-white'}`}>{isBn ? 'গুগল শিট সিঙ্ক' : 'Sheet Sync'}</span>
+                <FileSpreadsheet size={16} style={{ color: themeHex }} />
+                <span className="text-[10px] font-extrabold" style={{ color: isLight ? '#1e293b' : '#f1f5f9' }}>{isBn ? 'গুগল শিট সিঙ্ক' : 'Sheet Sync'}</span>
               </button>
             </div>
           </div>
-
         </div>
 
         {/* Ledger grid system main body (Spreadsheet layout) */}
         <div className="xl:col-span-3 space-y-4">
-          
-          {/* Filtration Header inside Ledger body */}
-          <div className={`${
-            isLight 
-              ? 'bg-white border border-slate-200 text-slate-800' 
-              : 'bg-gradient-to-r from-[#031c11] to-[#010906] border border-emerald-900/30'
-          } rounded-3xl p-4 shadow-md flex flex-col md:flex-row items-center justify-between gap-3`}>
+          <div 
+            className="rounded-3xl p-4 shadow-md flex flex-col md:flex-row items-center justify-between gap-3 border transition-all duration-300"
+            style={{
+              backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+              borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi,
+              color: isLight ? '#1e293b' : '#f1f5f9'
+            }}
+          >
             
             {/* Search inputs */}
             <div className="relative w-full md:w-80">
@@ -1692,10 +1767,13 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                 className={`w-full border rounded-2xl py-2.5 pl-10 pr-4 text-xs tracking-wide focus:outline-none transition-colors ${
                   isLight 
                     ? 'bg-slate-50 border-slate-200 text-slate-800 placeholder-slate-400 focus:border-emerald-500' 
-                    : 'bg-black/30 border border-emerald-900/60 text-white placeholder-slate-500 focus:border-amber-400'
+                    : 'bg-black/30 text-white placeholder-slate-500'
                 }`}
+                style={{
+                  borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi,
+                }}
               />
-              <Search className={`absolute left-3.5 top-1/2 -translate-y-1/2 ${isLight ? 'text-slate-400' : 'text-emerald-500'}`} size={14} />
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: themeHex }} size={14} />
             </div>
 
             {/* Filter and View mode segments */}
@@ -1713,13 +1791,18 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                   <button
                     key={grp.id}
                     onClick={() => setStatusFilter(grp.id as any)}
-                    className={`px-3 py-1.5 rounded-xl text-[10px] font-black transition-all border cursor-pointer ${
-                      statusFilter === grp.id 
-                        ? 'bg-amber-500 text-slate-950 border-amber-400/30 font-extrabold shadow-sm' 
-                        : (isLight 
-                            ? 'bg-slate-100 text-slate-600 border-slate-200/60 hover:bg-slate-200/50 hover:text-slate-800' 
-                            : 'bg-black/10 text-slate-400 border-emerald-900/40 hover:text-slate-200')
-                    }`}
+                    className="px-3 py-1.5 rounded-xl text-[10px] font-black transition-all border cursor-pointer"
+                    style={{
+                      backgroundColor: statusFilter === grp.id 
+                        ? themeHex 
+                        : (isLight ? '#f1f5f9' : 'rgba(0,0,0,0.15)'),
+                      color: statusFilter === grp.id 
+                        ? (isLightColor(themeHex) ? '#020b06' : '#ffffff') 
+                        : (isLight ? '#475569' : '#94a3b8'),
+                      borderColor: statusFilter === grp.id 
+                        ? `${themeHex}30` 
+                        : (isLight ? '#cbd5e1' : themeStyles.borderSemi),
+                    }}
                   >
                     {isBn ? grp.labelBn : grp.labelEn}
                   </button>
@@ -1727,9 +1810,13 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
               </div>
 
               {/* View switcher */}
-              <div className={`flex items-center gap-1 p-1 rounded-xl shrink-0 border ${
-                isLight ? 'bg-slate-100/70 border-slate-200' : 'bg-black/40 border-emerald-900/40'
-              }`}>
+              <div 
+                className="flex items-center gap-1 p-1 rounded-xl shrink-0 border"
+                style={{
+                  backgroundColor: isLight ? '#f1f5f9' : 'rgba(0,0,0,0.25)',
+                  borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi
+                }}
+              >
                 <span className={`text-[9px] ${isLight ? 'text-slate-500' : 'text-slate-400'} font-extrabold uppercase mr-1.5 ml-1 hidden sm:inline`}>{isBn ? 'ভিউ:' : 'View:'}</span>
                 {[
                   { id: 'auto', labelBn: 'অটো', labelEn: 'Auto' },
@@ -1739,11 +1826,13 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                   <button
                     key={opt.id}
                     onClick={() => setViewMode(opt.id as any)}
-                    className={`px-2.5 py-1 rounded-lg text-[9px] font-black tracking-wide uppercase transition-all cursor-pointer ${
-                      viewMode === opt.id 
-                        ? 'bg-emerald-500 text-[#020b06] font-extrabold shadow-sm' 
-                        : (isLight ? 'text-slate-500 hover:text-slate-800' : 'text-slate-400 hover:text-slate-300')
-                    }`}
+                    className="px-2.5 py-1 rounded-lg text-[9px] font-black tracking-wide uppercase transition-all cursor-pointer"
+                    style={{
+                      backgroundColor: viewMode === opt.id ? themeHex : 'transparent',
+                      color: viewMode === opt.id 
+                        ? (isLightColor(themeHex) ? '#020b06' : '#ffffff') 
+                        : (isLight ? '#64748b' : '#94a3b8'),
+                    }}
                   >
                     {isBn ? opt.labelBn : opt.labelEn}
                   </button>
@@ -1755,13 +1844,18 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                 <button
                   type="button"
                   onClick={() => setIsLedgerEditable(!isLedgerEditable)}
-                  className={`px-3 py-1.5 rounded-xl text-[10px] font-extrabold tracking-wide uppercase transition-all flex items-center gap-1.5 border shrink-0 cursor-pointer ${
-                    isLedgerEditable 
-                      ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-lg shadow-amber-500/10' 
-                      : (isLight 
-                          ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 hover:text-emerald-700 border border-emerald-500/20' 
-                          : 'bg-[#10b981]/15 hover:bg-[#10b981]/25 text-[#10b981] hover:text-white border border-[#10b981]/30')
-                  }`}
+                  className="px-3 py-1.5 rounded-xl text-[10px] font-extrabold tracking-wide uppercase transition-all flex items-center gap-1.5 border shrink-0 cursor-pointer hover:scale-[1.02]"
+                  style={{
+                    backgroundColor: isLedgerEditable 
+                      ? '#f59e0b' 
+                      : (isLight ? `${themeHex}10` : `${themeHex}1a`),
+                    color: isLedgerEditable 
+                      ? '#020b06' 
+                      : themeHex,
+                    borderColor: isLedgerEditable 
+                      ? '#f59e0b' 
+                      : `${themeHex}33`
+                  }}
                   title={isBn ? (isLedgerEditable ? 'এডিট মোড বন্ধ করুন' : 'চাঁদা এডিট করুন') : (isLedgerEditable ? 'Lock edits' : 'Edit subscriptions')}
                 >
                   <Edit2 size={11} className={`stroke-[2.5] ${isLedgerEditable ? 'animate-pulse' : ''}`} />
@@ -1770,30 +1864,6 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
               )}
             </div>
           </div>
-
-          {/* Edit Mode Guide Banner */}
-          {isAdmin && isLedgerEditable && (
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-2.5 px-4 flex items-center justify-between text-amber-400 text-xs font-bold leading-normal animate-fade-in shadow-sm">
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2 shrink-0">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-500 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                </span>
-                <p>
-                  {isBn 
-                    ? 'এডিট মোড সক্রিয়! এখন সরাসরি যেকোনো মাসের ঘরের উপর ক্লিক করে টাকা এডিট করতে পারবেন।' 
-                    : 'Edit mode active! Click directly on any month amount grid cell to update.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsLedgerEditable(false)}
-                className="text-[9px] bg-amber-500 text-slate-950 px-2.5 py-1 rounded-lg font-extrabold hover:bg-amber-450 transition-colors uppercase cursor-pointer"
-              >
-                {isBn ? 'লক' : 'Lock'}
-              </button>
-            </div>
-          )}
 
           {/* Comparative Bar Chart: Subscription Collections vs Active Members per Month */}
           <div className={`${
@@ -2538,27 +2608,31 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-[#05180e] border border-emerald-500/30 text-white w-full max-w-sm rounded-[1.8rem] overflow-hidden shadow-2xl p-6 relative"
+              className={`w-full max-w-sm rounded-[1.8rem] overflow-hidden shadow-2xl p-6 relative border transition-all ${isLight ? 'text-slate-800' : 'text-white'}`}
+              style={{
+                backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+                borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi
+              }}
             >
               {/* Top border ambient glow */}
-              <div className="absolute top-0 inset-x-0 h-[3px] bg-gradient-to-r from-emerald-500 via-amber-400 to-emerald-500" />
+              <div className="absolute top-0 inset-x-0 h-[3px]" style={{ backgroundColor: themeHex }} />
               
               <div className="flex items-center gap-3.5 pb-4 border-b border-white/[0.08]">
-                {/* Avatar with emerald ring */}
-                <div className="relative shrink-0 w-11 h-11 rounded-full overflow-hidden border-2 border-emerald-400/40 shadow-sm">
+                {/* Avatar with dynamic ring */}
+                <div className="relative shrink-0 w-11 h-11 rounded-full overflow-hidden border-2 shadow-sm" style={{ borderColor: `${themeHex}66` }}>
                   {editingCell.member.photoURL ? (
                     <img src={getImageUrl(editingCell.member.photoURL)} alt="" className="w-full h-full object-cover" referrerPolicy="referrer" />
                   ) : (
-                    <div className="w-full h-full bg-emerald-950 flex items-center justify-center text-xs text-amber-500 font-extrabold pb-0.5">
+                    <div className="w-full h-full bg-slate-205 flex items-center justify-center text-xs font-extrabold pb-0.5" style={{ backgroundColor: isLight ? '#f1f5f9' : '#0f172a', color: themeHex }}>
                       {editingCell.member.name.slice(0, 2).toUpperCase()}
                     </div>
                   )}
                 </div>
                 <div>
-                  <h3 className="font-extrabold text-[#10b981] text-[10px] uppercase tracking-wider">
+                  <h3 className="font-extrabold text-[10px] uppercase tracking-wider" style={{ color: themeHex }}>
                     {isBn ? 'চাঁদা হিসাব এডিট' : 'Edit Subscription Amount'}
                   </h3>
-                  <h4 className="font-extrabold text-sm text-slate-100">
+                  <h4 className={`font-extrabold text-sm ${isLight ? 'text-slate-800' : 'text-slate-100'}`}>
                     {isBn ? (editingCell.member.nameBn || editingCell.member.name) : editingCell.member.name}
                   </h4>
                   <p className="text-[10px] text-slate-400 font-mono font-medium mt-0.5">
@@ -2568,11 +2642,17 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
               </div>
 
               {/* Month label banner */}
-              <div className="my-4 bg-slate-950/40 border border-white/[0.05] p-3 rounded-xl flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-400">
+              <div 
+                className="my-4 p-3 rounded-xl flex items-center justify-between border"
+                style={{
+                  backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.15)',
+                  borderColor: isLight ? '#cbd5e1' : 'rgba(255,255,255,0.05)'
+                }}
+              >
+                <span className={`text-xs font-bold ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>
                   {isBn ? 'নির্বাচিত মাস ও বছর:' : 'Target Month & Year:'}
                 </span>
-                <span className="text-xs font-black text-amber-400 font-mono">
+                <span className="text-xs font-black font-mono" style={{ color: themeHex }}>
                   {isBn ? `${editingCell.month.labelBn} ${toBanglaDigits(selectedYear)}` : `${editingCell.month.labelEn} ${selectedYear}`}
                 </span>
               </div>
@@ -2580,17 +2660,23 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
               {/* Amount Inputs */}
               <div className="space-y-4">
                 <div>
-                  <label className="block text-[10px] uppercase font-black tracking-widest text-slate-400 mb-2">
+                  <label className={`block text-[10px] uppercase font-black tracking-widest ${isLight ? 'text-slate-500' : 'text-slate-400'} mb-2`}>
                     {isBn ? 'চাঁদার পরিমাণ (টাকা):' : 'Enter Amount (BDT):'}
                   </label>
-                  <div className="relative flex items-center bg-slate-950/50 border-2 border-emerald-950 rounded-2xl overflow-hidden focus-within:border-emerald-500/50 transition-all">
-                    <span className="pl-4 text-emerald-500 font-extrabold text-lg select-none">৳</span>
+                  <div 
+                    className="relative flex items-center rounded-2xl overflow-hidden transition-all border"
+                    style={{
+                      backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.25)',
+                      borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi
+                    }}
+                  >
+                    <span className="pl-4 font-extrabold text-lg select-none" style={{ color: themeHex }}>৳</span>
                     <input
                       id="edit-amount-input"
                       type="number"
                       value={inputAmount}
                       onChange={(e) => setInputAmount(e.target.value)}
-                      className="w-full py-3.5 pl-2.5 pr-4 bg-transparent text-white font-mono font-black text-xl focus:outline-none placeholder-slate-600"
+                      className={`w-full py-3.5 pl-2.5 pr-4 bg-transparent font-mono font-black text-xl focus:outline-none placeholder-slate-600 ${isLight ? 'text-slate-800' : 'text-white'}`}
                       placeholder="0.00"
                     />
                   </div>
@@ -2598,14 +2684,14 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
 
                 {/* Preset Fast Selection Buttons */}
                 <div>
-                  <span className="block text-[9px] uppercase font-black tracking-widest text-slate-500 mb-1.5 leading-none">
+                  <span className={`block text-[9px] uppercase font-black tracking-widest ${isLight ? 'text-slate-400' : 'text-slate-500'} mb-1.5 leading-none`}>
                     {isBn ? 'দ্রুত নির্বাচন করুন' : 'Quick Amount Presets'}
                   </span>
                   <div className="grid grid-cols-4 gap-2">
                     <button
                       type="button"
                       onClick={() => setInputAmount('0')}
-                      className="py-2.5 rounded-xl text-[11px] font-black bg-slate-950/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-950 transition-all cursor-pointer"
+                      className={`py-2.5 rounded-xl text-[11px] font-black border transition-all cursor-pointer ${isLight ? 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-500' : 'bg-slate-950/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-950'}`}
                     >
                       {isBn ? '০' : '0'}
                     </button>
@@ -2613,7 +2699,12 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                       <button
                         type="button"
                         onClick={() => setInputAmount(String(editingCell.member.monthlySubscription))}
-                        className="py-2.5 rounded-xl text-[11px] font-black bg-emerald-500/10 border border-emerald-500/20 text-[#10b981] hover:bg-emerald-500/20 transition-all cursor-pointer font-mono"
+                        className="py-2.5 rounded-xl text-[11px] font-black transition-all cursor-pointer font-mono border"
+                        style={{
+                          backgroundColor: `${themeHex}12`,
+                          borderColor: `${themeHex}25`,
+                          color: themeHex
+                        }}
                         title={isBn ? 'সদস্যের নির্ধারিত ফি' : "Member's Standard Fee"}
                       >
                         ৳{isBn ? toBanglaDigits(editingCell.member.monthlySubscription) : editingCell.member.monthlySubscription}
@@ -2623,7 +2714,7 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                       <button
                         type="button"
                         onClick={() => setInputAmount('500')}
-                        className="py-2.5 rounded-xl text-[11px] font-black bg-slate-950/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-950 transition-all cursor-pointer font-mono"
+                        className={`py-2.5 rounded-xl text-[11px] font-black border transition-all cursor-pointer font-mono ${isLight ? 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-500' : 'bg-slate-950/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-950'}`}
                       >
                         ৳{isBn ? '৫০০' : '500'}
                       </button>
@@ -2632,7 +2723,7 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                       <button
                         type="button"
                         onClick={() => setInputAmount('1000')}
-                        className="py-2.5 rounded-xl text-[11px] font-black bg-slate-950/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-950 transition-all cursor-pointer font-mono"
+                        className={`py-2.5 rounded-xl text-[11px] font-black border transition-all cursor-pointer font-mono ${isLight ? 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-500' : 'bg-slate-950/60 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-950'}`}
                       >
                         ৳{isBn ? '১,০০০' : '1000'}
                       </button>
@@ -2646,7 +2737,7 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                 <button
                   type="button"
                   onClick={() => setEditingCell(null)}
-                  className="flex-1 py-3 bg-slate-900 border border-slate-850 hover:bg-slate-850 text-slate-300 rounded-xl text-[11px] font-bold transition-all cursor-pointer"
+                  className={`flex-1 py-3 border rounded-xl text-[11px] font-extrabold transition-all cursor-pointer ${isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200' : 'bg-slate-900 hover:bg-slate-850 border-slate-800 text-slate-300'}`}
                   disabled={isSubmittingAmount}
                 >
                   {isBn ? 'বাতিল' : 'Cancel'}
@@ -2663,11 +2754,16 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                     handleSaveCellAmount(parsed)
                       .finally(() => setIsSubmittingAmount(false));
                   }}
-                  className="flex-1 py-3 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-[#020b06] border border-emerald-400/25 rounded-xl text-[11px] font-black shadow-lg shadow-emerald-950/40 relative overflow-hidden transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 py-3 hover:opacity-95 border rounded-xl text-[11px] font-black shadow-lg relative overflow-hidden transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  style={{
+                    backgroundColor: themeHex,
+                    borderColor: `${themeHex}30`,
+                    color: isLightColor(themeHex) ? '#020b06' : '#ffffff'
+                  }}
                   disabled={isSubmittingAmount}
                 >
                   {isSubmittingAmount ? (
-                    <RefreshCw size={12} className="animate-spin text-[#020b06]" />
+                    <RefreshCw size={12} className="animate-spin" style={{ color: isLightColor(themeHex) ? '#020b06' : '#ffffff' }} />
                   ) : (
                     <CheckCircle2 size={12} className="stroke-[2.5]" />
                   )}
@@ -2687,22 +2783,26 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-[#05180e] border border-emerald-500/30 text-white w-full max-w-2xl rounded-[1.8rem] overflow-hidden shadow-2xl p-6 relative my-8"
+              className={`w-full max-w-2xl rounded-[1.8rem] overflow-hidden shadow-2xl p-6 relative my-8 border transition-all ${isLight ? 'text-slate-800' : 'text-white'}`}
+              style={{
+                backgroundColor: isLight ? '#ffffff' : themeStyles.bgCardDark,
+                borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi
+              }}
             >
               {/* Top border ambient glow */}
-              <div className="absolute top-0 inset-x-0 h-[3px] bg-gradient-to-r from-emerald-500 via-amber-400 to-emerald-500" />
+              <div className="absolute top-0 inset-x-0 h-[3px]" style={{ backgroundColor: themeHex }} />
               
               {/* Header */}
               <div className="flex items-center justify-between pb-4 border-b border-white/[0.08]">
                 <div className="flex items-center gap-2.5">
-                  <span className="p-1.5 rounded-lg bg-amber-500/10 text-amber-500">
+                  <span className={`p-1.5 rounded-lg ${isLight ? 'bg-amber-100 text-amber-600' : 'bg-amber-500/10 text-amber-500'}`}>
                     <Edit2 size={16} className="stroke-[2.5]" />
                   </span>
                   <div>
-                    <h3 className="font-extrabold text-[#10b981] text-[10px] uppercase tracking-wider font-mono">
+                    <h3 className="font-extrabold text-[10px] uppercase tracking-wider font-mono" style={{ color: themeHex }}>
                       {isBn ? 'বার্ষিক চাঁদা এডিট' : 'Edit Monthly Collection'}
                     </h3>
-                    <h4 className="font-extrabold text-sm text-slate-100">
+                    <h4 className={`font-extrabold text-sm ${isLight ? 'text-slate-850' : 'text-slate-100'}`}>
                       {isBn ? 'পুরা বছরের চাঁদা একসাথে সংরক্ষণ' : 'Update collection for the entire year'}
                     </h4>
                   </div>
@@ -2710,7 +2810,7 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                 <button
                   type="button"
                   onClick={() => setBulkEditMemberLedger(null)}
-                  className="p-1.5 rounded-full hover:bg-white/[0.08] text-slate-400 hover:text-white transition-all cursor-pointer"
+                  className={`p-1.5 rounded-full transition-all cursor-pointer ${isLight ? 'hover:bg-slate-100 text-slate-400 hover:text-slate-700' : 'hover:bg-white/[0.08] text-slate-400 hover:text-white'}`}
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
@@ -2719,20 +2819,26 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
               </div>
 
               {/* Member Info Banner */}
-              <div className="mt-4 bg-[#031d10] border border-emerald-500/15 p-4 rounded-2xl flex items-center gap-4">
-                {/* Avatar with emerald ring */}
-                <div className="relative shrink-0 w-12 h-12 rounded-full overflow-hidden border-2 border-emerald-400/40 shadow-sm">
+              <div 
+                className="mt-4 border p-4 rounded-2xl flex items-center gap-4 transition-colors"
+                style={{
+                  backgroundColor: isLight ? '#f8fafc' : 'rgba(0,0,0,0.25)',
+                  borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi
+                }}
+              >
+                {/* Avatar with dynamic ring */}
+                <div className="relative shrink-0 w-12 h-12 rounded-full overflow-hidden border-2 shadow-sm" style={{ borderColor: `${themeHex}66` }}>
                   {bulkEditMemberLedger.member.photoURL ? (
                     <img src={getImageUrl(bulkEditMemberLedger.member.photoURL)} alt="" className="w-full h-full object-cover" referrerPolicy="referrer" />
                   ) : (
-                    <div className="w-full h-full bg-emerald-950 flex items-center justify-center text-xs text-amber-500 font-extrabold pb-0.5">
+                    <div className="w-full h-full bg-slate-205 flex items-center justify-center text-xs font-extrabold pb-0.5" style={{ backgroundColor: isLight ? '#f1f5f9' : '#0f172a', color: themeHex }}>
                       {bulkEditMemberLedger.member.name.slice(0, 2).toUpperCase()}
                     </div>
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h4 className="font-extrabold text-base text-slate-100 truncate">
+                    <h4 className={`font-extrabold text-base ${isLight ? 'text-slate-800' : 'text-slate-100'} truncate`}>
                       {isBn ? (bulkEditMemberLedger.member.nameBn || bulkEditMemberLedger.member.name) : bulkEditMemberLedger.member.name}
                     </h4>
                     {(bulkEditMemberLedger.member.memberId.toLowerCase().includes('vip') || 
@@ -2742,10 +2848,10 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                       </span>
                     )}
                   </div>
-                  <p className="text-[10px] text-emerald-400 font-mono font-bold mt-0.5">
+                  <p className="text-[10px] font-mono font-bold mt-0.5" style={{ color: themeHex }}>
                     ID: {bulkEditMemberLedger.member.memberId}
                   </p>
-                  <p className="text-[10px] text-slate-400 leading-normal mt-1">
+                  <p className={`text-[10px] leading-normal mt-1 ${isLight ? 'text-slate-550' : 'text-slate-400'}`}>
                     {isBn ? 'আপনি এই সদস্যের মাসিক চাঁদার কিস্তিগুলো এক ক্লিকে এডিট করতে পারবেন।' : 'You can edit monthly collection for this member.'}
                   </p>
                 </div>
@@ -2753,11 +2859,17 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
 
               {/* 12 Months Input Fields Grid */}
               <div className="mt-5 space-y-3">
-                <span className="block text-[10px] uppercase font-black tracking-widest text-slate-400 leading-none">
+                <span className={`block text-[10px] uppercase font-black tracking-widest ${isLight ? 'text-slate-500' : 'text-slate-400'} leading-none`}>
                   {isBn ? 'প্রতি মাসের চাঁদার হার (টাকা)' : 'Monthly Amounts (BDT)'}
                 </span>
 
-                <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-4 gap-3 bg-slate-950/20 border border-white/[0.04] p-4 rounded-2xl">
+                <div 
+                  className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-4 gap-3 border p-4 rounded-2xl"
+                  style={{
+                    backgroundColor: isLight ? '#fafafa' : 'rgba(0,0,0,0.15)',
+                    borderColor: isLight ? '#f1f5f9' : 'rgba(255,255,255,0.02)'
+                  }}
+                >
                   {monthsList.map(m => {
                     const checkMonthVal = parseInt(m.numeric, 10);
                     const isJoined = selectedYear > bulkEditMemberLedger.joinedYear || 
@@ -2765,26 +2877,38 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                     const isApplicable = bulkEditMemberLedger.member.status !== MemberStatus.INACTIVE && isJoined && bulkEditMemberLedger.monthlyFee > 0;
                     
                     return (
-                      <div key={m.numeric} className={`p-2 rounded-xl flex flex-col gap-1.5 ${isApplicable ? 'bg-slate-950/40 border border-white/[0.04]' : 'bg-slate-950/10 border border-white/[0.01] opacity-50'}`}>
+                      <div 
+                        key={m.numeric} 
+                        className={`p-2 rounded-xl flex flex-col gap-1.5 border transition-all ${
+                          isApplicable 
+                            ? (isLight ? 'bg-white border-slate-200' : 'bg-slate-950/40 border-white/[0.04]') 
+                            : (isLight ? 'bg-slate-100/50 border-slate-150 opacity-40' : 'bg-slate-950/10 border-white/[0.01] opacity-50')
+                        }`}
+                      >
                         <div className="flex items-center justify-between px-1">
-                          <span className="text-[10px] font-extrabold text-slate-400 uppercase">
+                          <span className={`text-[10px] font-extrabold ${isLight ? 'text-slate-500' : 'text-slate-450'} uppercase`}>
                             {isBn ? m.labelBn : m.labelEn}
                           </span>
                           {!isApplicable && (
-                            <span className="text-[8px] bg-slate-800 text-slate-400 px-1 py-0.2 rounded-md font-bold leading-normal">
+                            <span className={`text-[8px] px-1 py-0.2 rounded-md font-bold leading-normal ${isLight ? 'bg-slate-200 text-slate-500' : 'bg-slate-800 text-slate-400'}`}>
                               {isBn ? 'এন/এ' : 'N/A'}
                             </span>
                           )}
                         </div>
-                        <div className="relative flex items-center bg-slate-950 border border-emerald-950 focus-within:border-amber-500/50 rounded-lg overflow-hidden transition-all">
-                          <span className="pl-2.5 text-emerald-500/80 font-bold text-xs select-none">৳</span>
+                        <div 
+                          className="relative flex items-center border rounded-lg overflow-hidden transition-all"
+                          style={{
+                            borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi
+                          }}
+                        >
+                          <span className="pl-2.5 font-bold text-xs select-none" style={{ color: themeHex }}>৳</span>
                           <input
                             type="number"
                             disabled={!isApplicable}
                             value={bulkEditInputs[m.numeric] || ''}
                             onChange={(e) => handleBulkInputChange(m.numeric, e.target.value)}
                             onFocus={(e) => e.target.select()}
-                            className="w-full py-2 pl-1 pr-2 bg-transparent text-white font-mono font-extrabold text-xs focus:outline-none disabled:cursor-not-allowed text-center"
+                            className={`w-full py-2 pl-1 pr-2 bg-transparent font-mono font-extrabold text-xs focus:outline-none disabled:cursor-not-allowed text-center ${isLight ? 'text-slate-800' : 'text-white'}`}
                             placeholder="0"
                           />
                         </div>
@@ -2795,27 +2919,33 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
               </div>
 
               {/* Real-time Dynamic Calculations */}
-              <div className="mt-5 bg-[#031d10]/40 border border-[#10b981]/15 rounded-2xl p-4 flex items-center justify-around gap-2 text-center">
+              <div 
+                className="mt-5 border rounded-2xl p-4 flex items-center justify-around gap-2 text-center transition-colors"
+                style={{
+                  backgroundColor: isLight ? '#f1f5f9' : 'rgba(0,0,0,0.15)',
+                  borderColor: isLight ? '#cbd5e1' : themeStyles.borderSemi
+                }}
+              >
                 <div>
-                  <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  <h5 className={`text-[10px] font-bold ${isLight ? 'text-slate-550' : 'text-slate-400'} uppercase tracking-wider mb-1`}>
                     {isBn ? 'মোট পরিশোধ' : 'Total Paid'}
                   </h5>
-                  <p className="text-sm font-black text-[#10b981] font-mono">
+                  <p className="text-sm font-black font-mono text-[#10b981]">
                     ৳ {formatCurrency(modalCalculations.totalPaid, isBn)}
                   </p>
                 </div>
-                <div className="w-px h-8 bg-white/[0.06]" />
+                <div className={`w-[1px] h-8 ${isLight ? 'bg-slate-300' : 'bg-white/[0.06]'}`} />
                 <div>
-                  <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  <h5 className={`text-[10px] font-bold ${isLight ? 'text-slate-550' : 'text-slate-400'} uppercase tracking-wider mb-1`}>
                     {isBn ? 'মোট বকেয়া' : 'Total Due'}
                   </h5>
                   <p className="text-sm font-black text-rose-450 font-mono">
                     ৳ {formatCurrency(modalCalculations.totalDue, isBn)}
                   </p>
                 </div>
-                <div className="w-px h-8 bg-white/[0.06]" />
+                <div className={`w-[1px] h-8 ${isLight ? 'bg-slate-300' : 'bg-white/[0.06]'}`} />
                 <div>
-                  <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  <h5 className={`text-[10px] font-bold ${isLight ? 'text-slate-550' : 'text-slate-400'} uppercase tracking-wider mb-1`}>
                     {isBn ? 'মোট বাৎসরিক' : 'Annual Total'}
                   </h5>
                   <p className="text-sm font-black text-amber-500 font-mono">
@@ -2829,7 +2959,7 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                 <button
                   type="button"
                   onClick={() => setBulkEditMemberLedger(null)}
-                  className="flex-1 py-3 bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-300 rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all cursor-pointer"
+                  className={`flex-1 py-3 border rounded-xl text-[11px] font-extrabold uppercase tracking-wider transition-all cursor-pointer ${isLight ? 'bg-slate-105 hover:bg-slate-200 text-slate-700 border-slate-200' : 'bg-slate-900 border border-slate-800 text-slate-300'}`}
                   disabled={isSavingBulk}
                 >
                   {isBn ? 'বাতিল' : 'Cancel'}
@@ -2837,11 +2967,16 @@ export default function YearlyLedger({ setActiveTab }: YearlyLedgerProps) {
                 <button
                   type="button"
                   onClick={handleSaveBulkAmounts}
-                  className="flex-1 py-3 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-[#020b06] border border-emerald-400/25 rounded-xl text-[11px] font-black shadow-lg shadow-emerald-950/40 relative overflow-hidden transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 py-3 hover:opacity-95 border rounded-xl text-[11px] font-black shadow-lg relative overflow-hidden transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  style={{
+                    backgroundColor: themeHex,
+                    borderColor: `${themeHex}30`,
+                    color: isLightColor(themeHex) ? '#020b06' : '#ffffff'
+                  }}
                   disabled={isSavingBulk}
                 >
                   {isSavingBulk ? (
-                    <RefreshCw size={12} className="animate-spin text-[#020b06]" />
+                    <RefreshCw size={12} className="animate-spin" style={{ color: isLightColor(themeHex) ? '#020b06' : '#ffffff' }} />
                   ) : (
                     <CheckCircle2 size={12} className="stroke-[2.5]" />
                   )}

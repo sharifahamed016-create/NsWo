@@ -68,6 +68,57 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["name", "nameBn"]
+    },
+    "ArchiveItem": {
+      "title": "ArchiveItem",
+      "description": "A digital archive doc representing old reports, memos or images",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "titleBn": { "type": "string" },
+        "description": { "type": "string" },
+        "descriptionBn": { "type": "string" },
+        "category": { "type": "string", "enum": ["report", "photo", "document"] },
+        "date": { "type": "string", "format": "date" },
+        "url": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["title", "titleBn", "category", "date"]
+    },
+    "CommitteeMember": {
+      "title": "CommitteeMember",
+      "description": "A member representing official positions in active administrative term",
+      "type": "object",
+      "properties": {
+        "memberId": { "type": "string" },
+        "name": { "type": "string" },
+        "nameBn": { "type": "string" },
+        "role": { "type": "string" },
+        "roleBn": { "type": "string" },
+        "termYears": { "type": "string" },
+        "weightRank": { "type": "number" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["name", "nameBn", "role", "roleBn", "termYears"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Private direct chat message or department/branch discussion room log",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "roomType": { "type": "string", "enum": ["direct", "group"] },
+        "roomCategory": { "type": "string" },
+        "text": { "type": "string" },
+        "voiceURL": { "type": "string" },
+        "duration": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["senderId", "senderName", "roomType", "roomCategory", "createdAt"]
     }
   },
   "firestore": {
@@ -86,6 +137,18 @@
     "/settings/config": {
       "schema": "AppSettings",
       "description": "Global application configuration"
+    },
+    "/digital_archive/{archiveId}": {
+      "schema": "ArchiveItem",
+      "description": "Digital Archive items of meetings, certificates, other records"
+    },
+    "/committee_members/{committeeMemberId}": {
+      "schema": "CommitteeMember",
+      "description": "Administrative official designations"
+    },
+    "/chat_messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Internal and department discussion board messages"
     }
   }
 }

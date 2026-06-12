@@ -8,7 +8,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Menu, X, Home, Users, CreditCard, PieChart, 
   FileText, Settings, LogOut, Languages, Search, Bell,
-  Award, Heart, Calendar, Sparkles, Shield, FileSpreadsheet
+  Award, Heart, Calendar, Sparkles, Shield, FileSpreadsheet,
+  Video
 } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { getImageUrl } from '../lib/utils';
@@ -29,9 +30,14 @@ export default function Layout({ children, activeTab, setActiveTab }: LayoutProp
     { id: 'dashboard', label: language === 'bn' ? 'সারাংশ' : 'Dashboard', emoji: '🏠', icon: Home },
     { id: 'members', label: language === 'bn' ? 'সাধারণ সদস্য' : 'Members', emoji: '👥', icon: Users },
     { id: 'yearly-ledger', label: language === 'bn' ? 'বাৎসরিক লেজার' : 'Yearly Ledger', emoji: '📅', icon: Calendar },
-    { id: 'payments', label: language === 'bn' ? 'পেমেন্ট এন্ট্রি' : 'Payment Entry', emoji: '💰', icon: CreditCard },
+    { id: 'bulk-entry', label: language === 'bn' ? 'চাঁদা এন্ট্রি ডেক্স (Bulk)' : 'Bulk Subscription Entry', emoji: '⚡', icon: CreditCard },
+    { id: 'payments', label: language === 'bn' ? 'পেমেন্ট রশিদ খাতা' : 'Payment Record Log', emoji: '🪙', icon: CreditCard },
     { id: 'expenses', label: language === 'bn' ? 'আয়-ব্যয় হিসাব' : 'Income & Expense', emoji: '⚖️', icon: FileText },
     { id: 'events', label: language === 'bn' ? 'ইভেন্ট ম্যানেজমেন্ট' : 'Events', emoji: '🎉', icon: Calendar },
+    { id: 'video-meeting', label: language === 'bn' ? 'ভিডিও মিটিং রুম' : 'Video Meeting', emoji: '📹', icon: Video },
+    { id: 'digital-archive', label: language === 'bn' ? 'ডিজিটাল আর্কাইভ' : 'Digital Archive', emoji: '📂', icon: FileText },
+    { id: 'committee-management', label: language === 'bn' ? 'পরিচালনা পর্ষদ' : 'Committee', emoji: '💎', icon: Award },
+    { id: 'communication-hub', label: language === 'bn' ? 'যোগাযোগ ও চ্যাট' : 'Communication', emoji: '💬', icon: Users },
     { id: 'blood-donors', label: language === 'bn' ? 'রক্তদাতা ডিরেক্টরি' : 'Blood Donors', emoji: '🩸', icon: Heart },
     { id: 'notice-board', label: language === 'bn' ? 'ডিজিটাল নোটিশ বোর্ড' : 'Notice Board', emoji: '🏛️', icon: FileText },
     { id: 'member-polls', label: language === 'bn' ? 'ভোটিং ও পোলিং' : 'Member Polls', emoji: '🗳️', icon: Users },
@@ -188,6 +194,13 @@ export default function Layout({ children, activeTab, setActiveTab }: LayoutProp
               </div>
             </div>
             <button 
+              onClick={toggleLanguage}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-white/70 hover:text-white hover:bg-white/10 rounded-lg transition-colors text-xs mb-2 font-bold cursor-pointer"
+            >
+              <Languages size={16} className="text-amber-400" />
+              <span>{language === 'bn' ? 'English (EN)' : 'বাংলা (BN)'}</span>
+            </button>
+            <button 
               onClick={logout}
               className="w-full flex items-center gap-2 px-4 py-2 text-white/60 hover:text-white hover:bg-white/10 rounded-lg transition-colors text-xs"
             >
@@ -302,9 +315,18 @@ export default function Layout({ children, activeTab, setActiveTab }: LayoutProp
         <main className="flex-1 min-w-0 pb-20 lg:pb-0">
           {/* Top Bar for Desktop */}
           <div className="hidden lg:flex items-center justify-end p-6 pb-2 max-w-7xl mx-auto gap-4">
+             {/* Language Switcher for Desktop Header */}
+             <button 
+               onClick={toggleLanguage}
+               className="flex items-center gap-2 px-4 py-3 bg-white hover:text-emerald-600 text-slate-700 hover:border-slate-200 rounded-2xl border border-dashed border-slate-200/80 shadow-xs transition-all text-xs font-black whitespace-nowrap cursor-pointer"
+             >
+               <Languages size={15} className="text-emerald-600 shrink-0" />
+               <span>{language === 'bn' ? 'English (EN)' : 'বাংলা (BN)'}</span>
+             </button>
+
              <button 
                onClick={() => setIsNotificationsOpen(true)}
-               className="p-3 bg-white text-slate-400 hover:text-emerald-600 rounded-2xl border border-slate-100 shadow-sm transition-all relative"
+               className="p-3 bg-white text-slate-400 hover:text-emerald-600 rounded-2xl border border-slate-100 shadow-sm transition-all relative cursor-pointer"
              >
                <Bell size={20} />
                <div className="absolute top-3 right-3 w-2 h-2 bg-rose-500 rounded-full border-2 border-white" />

@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = 3000;
 
 app.use(express.json());
 
@@ -160,6 +160,109 @@ Please write clean, Markdown-formatted Bengali responses. Use gold-standard bull
   }
 });
 
+// Proxy endpoint to send automated messages using WhatsApp Business API (Cloud API)
+app.post("/api/whatsapp/send", async (req, res) => {
+  try {
+    const { to, text, templateName, templateLang, templateParams } = req.body;
+    
+    const token = process.env.WHATSAPP_TOKEN;
+    const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const defaultTemplateName = process.env.WHATSAPP_TEMPLATE_NAME;
+
+    // If credentials are not set, return fallback mode gracefully
+    if (!token || !phoneId) {
+      return res.json({
+        success: false,
+        mode: "fallback",
+        message: "WhatsApp Business API credentials (WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID) are not configured in Settings > Secrets. Falling back to interactive web client..."
+      });
+    }
+
+    const cleanTo = to.replace(/[^0-9]/g, '');
+    const metaApiUrl = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
+
+    // Decide payload type: Template vs custom text payload
+    const chosenTemplate = templateName || defaultTemplateName || null;
+
+    let payload: any;
+    if (chosenTemplate) {
+      const parameters = (templateParams || []).map((p: string) => ({
+        type: "text",
+        text: p
+      }));
+
+      payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: cleanTo,
+        type: "template",
+        template: {
+          name: chosenTemplate,
+          language: {
+            code: templateLang || "bn"
+          },
+          components: parameters.length > 0 ? [
+            {
+              type: "body",
+              parameters: parameters
+            }
+          ] : []
+        }
+      };
+    } else {
+      payload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: cleanTo,
+        type: "text",
+        text: {
+          preview_url: true,
+          body: text
+        }
+      };
+    }
+
+    const response = await fetch(metaApiUrl, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const resultText = await response.text();
+    let resultJson: any = {};
+    try {
+      resultJson = JSON.parse(resultText);
+    } catch (e) {}
+
+    if (response.ok) {
+      return res.json({
+        success: true,
+        mode: "api",
+        message: "Automated WhatsApp message successfully dispatched!",
+        detail: resultJson
+      });
+    } else {
+      console.warn("[WhatsApp API Server Proxy Error]:", resultJson);
+      return res.json({
+        success: false,
+        mode: "fallback",
+        message: `API response failure (${response.status}): ${resultJson?.error?.message || 'Unknown Meta Cloud API error'}. Falling back to manual dispatch option...`,
+        error: resultJson
+      });
+    }
+  } catch (error: any) {
+    console.error("[WhatsApp API Server Proxy Exception]:", error);
+    return res.json({
+      success: false,
+      mode: "fallback",
+      message: `System Exception: ${error.message || 'Server-side processing error'}. Falling back to manual dispatch option...`
+    });
+  }
+});
+
 // API health check
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", uptime: process.uptime() });
@@ -167,7 +270,7 @@ app.get("/api/health", (req, res) => {
 
 // Configure Vite middleware or static paths
 async function setupServer() {
-  const isDev = process.env.NODE_ENV === "development";
+  const isDev = process.env.NODE_ENV !== "production";
 
   if (isDev) {
     const { createServer: createViteServer } = await import("vite");

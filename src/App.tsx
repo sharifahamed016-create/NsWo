@@ -24,11 +24,25 @@ import GoogleSheetsSync from './components/GoogleSheetsSync';
 import YearlyLedger from './components/YearlyLedger';
 import SpecialProjects from './components/SpecialProjects';
 import ReliefDistribution from './components/ReliefDistribution';
+import VideoMeeting from './components/VideoMeeting';
+import DigitalArchive from './components/DigitalArchive';
+import CommitteeManagement from './components/CommitteeManagement';
+import CommunicationHub from './components/CommunicationHub';
 import { MemberRoleType } from './types';
+import CollectionPortal from './components/Payments/CollectionPortal';
 
 function AppContent() {
   const { user, loading, t } = useAppContext();
   const [activeTab, setActiveTab] = useState('dashboard');
+
+  const isPortal = typeof window !== 'undefined' && (
+    new URLSearchParams(window.location.search).get('portal') === 'data-entry' ||
+    window.location.hash.includes('portal/data-entry')
+  );
+
+  if (isPortal) {
+    return <CollectionPortal />;
+  }
 
   if (loading) {
     return (
@@ -56,7 +70,9 @@ function AppContent() {
       case 'events':
         return <EventsList />;
       case 'payments':
-        return <PaymentsList />;
+        return <PaymentsList defaultSubTab="records" />;
+      case 'bulk-entry':
+        return <PaymentsList defaultSubTab="bulk" />;
       case 'expenses':
         return <ExpensesList />;
       case 'blood-donors':
@@ -71,6 +87,14 @@ function AppContent() {
         return <SpecialProjects />;
       case 'relief-distribution':
         return <ReliefDistribution />;
+      case 'video-meeting':
+        return <VideoMeeting />;
+      case 'digital-archive':
+        return <DigitalArchive />;
+      case 'committee-management':
+        return <CommitteeManagement />;
+      case 'communication-hub':
+        return <CommunicationHub />;
       case 'reminders':
         return <DueRemindersList />;
       case 'ai-copilot':

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Save, Globe, Phone, Image as ImageIcon, CheckCircle2, Shield, Camera, Settings as SettingsIcon, RefreshCw, Database, AlertTriangle } from 'lucide-react';
+import { Save, Globe, Phone, Image as ImageIcon, CheckCircle2, Shield, Camera, Settings as SettingsIcon, RefreshCw, Database, AlertTriangle, Copy, Link2, ExternalLink } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 import { uploadFile } from '../lib/storage';
 import { getImageUrl } from '../lib/utils';
@@ -30,7 +30,10 @@ export default function Settings() {
     officialSealURL: settings.officialSealURL || '',
     contactPhone: settings.contactPhone || '',
     themeColor: settings.themeColor || '#059669',
+    portalPasscode: settings.portalPasscode || '7890',
   });
+  const [copiedPortalUrl, setCopiedPortalUrl] = useState(false);
+  const [copiedBypassUrl, setCopiedBypassUrl] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isUploadingSeal, setIsUploadingSeal] = useState(false);
@@ -71,6 +74,7 @@ export default function Settings() {
         officialSealURL: settings.officialSealURL || '',
         contactPhone: settings.contactPhone || '',
         themeColor: settings.themeColor || '#059669',
+        portalPasscode: settings.portalPasscode || '7890',
       });
       setIsInitialized(true);
     }
@@ -369,6 +373,87 @@ export default function Settings() {
                             ? 'এটি চাঁদা বিবরণী রশিদ এবং বিজ্ঞপ্তি ডিসপ্যাচ ড্যাশবোর্ডে অফিসিয়াল ভেরিফাইড সিল হিসেবে ব্যবহৃত হবে।' 
                             : 'This is used as the verified stamp/seal in member statements and reminder logs.'}
                         </p>
+                      </div>
+
+                      {/* Collection Shared Portal Link Setup Section */}
+                      <div className="space-y-4 col-span-1 md:col-span-2 pt-6 border-t border-slate-100">
+                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2">
+                          <Link2 size={12} className="text-emerald-600" />
+                          {language === 'bn' ? 'স্মার্ট চাঁদা কালেকশন পোর্টাল লিঙ্ক' : 'Collection Portal Link Setup'}
+                        </h4>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1 flex items-center gap-2">
+                              🔐 {language === 'bn' ? 'কালেকশন পিন কোড (Passcode PIN)' : 'Portal Access Bypass PIN'}
+                            </label>
+                            <input 
+                              type="text"
+                              maxLength={8}
+                              value={formData.portalPasscode}
+                              onChange={(e) => setFormData({...formData, portalPasscode: e.target.value.replace(/[^\d]/g, '')})}
+                              disabled={!isSuperAdmin}
+                              className="w-full px-5 py-4 bg-slate-50 border-none rounded-2xl text-sm font-black text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-emerald-500 transition-all outline-none disabled:bg-slate-100 disabled:opacity-100"
+                              placeholder="7890"
+                            />
+                            <p className="text-[9px] text-slate-400 font-semibold ml-1">
+                              {language === 'bn' 
+                                ? 'এই পিনের মাধ্যমে অনুমোদিত কালেক্টর সরাসরি লিংক খুলে কাজ শুরু করতে পারবেন।' 
+                                : 'PIN used to authorize sub-admins bypassing raw Google login.'}
+                            </p>
+                          </div>
+
+                          <div className="space-y-3 bg-emerald-50/50 border border-emerald-100 rounded-3xl p-4 flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider">
+                                  {language === 'bn' ? 'কালেকশন লিঙ্ক প্রস্তুত' : 'Shared Link Online'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] font-bold text-slate-600 mt-1 leading-normal">
+                                {language === 'bn' 
+                                  ? 'নিচের কপি বাটনে ক্লিক করে লিঙ্কটি অন্যান্য কালেকশন ম্যানেজার বা অ্যাডমিনকে পাঠান।' 
+                                  : 'Copy and send this path so managers can record collections seamlessly.'}
+                              </p>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row gap-2 pt-1.5">
+                              {/* Option A: Bypass Login Link */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const pin = formData.portalPasscode || '7890';
+                                  const baseUrl = window.location.origin;
+                                  const finalUrl = `${baseUrl}/?portal=data-entry&key=${pin}`;
+                                  navigator.clipboard.writeText(finalUrl);
+                                  setCopiedBypassUrl(true);
+                                  setTimeout(() => setCopiedBypassUrl(false), 2000);
+                                }}
+                                className="flex-1 px-3 py-2.5 bg-slate-900 text-white font-extrabold text-[10px] rounded-xl flex items-center justify-center gap-1.5 hover:bg-slate-800 transition-all cursor-pointer whitespace-nowrap"
+                              >
+                                <Copy size={12} />
+                                {copiedBypassUrl ? (language === 'bn' ? 'কপি সফল!' : 'Copied!') : (language === 'bn' ? 'অটো-লগইন লিংক কপি' : 'Copy Auto-Login Url')}
+                              </button>
+
+                              {/* Option B: Clear PIN Entrance Link */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const baseUrl = window.location.origin;
+                                  const finalUrl = `${baseUrl}/?portal=data-entry`;
+                                  navigator.clipboard.writeText(finalUrl);
+                                  setCopiedPortalUrl(true);
+                                  setTimeout(() => setCopiedPortalUrl(false), 2000);
+                                }}
+                                className="flex-1 px-3 py-2.5 bg-emerald-600/10 hover:bg-emerald-600/15 text-emerald-700 font-extrabold text-[10px] rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer whitespace-nowrap"
+                              >
+                                <ExternalLink size={12} />
+                                {copiedPortalUrl ? (language === 'bn' ? 'কপি সফল!' : 'Copied!') : (language === 'bn' ? 'স্ট্যান্ডার্ড লিংক কপি' : 'Copy Clean Url')}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
